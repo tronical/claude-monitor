@@ -87,9 +87,6 @@ pub async fn run(
             .with_max_connections(2),
     );
     controller.set_config(&config).expect("access point configuration");
-    // Dropping the controller would stop WiFi.
-    static CONTROLLER: StaticCell<WifiController<'static>> = StaticCell::new();
-    CONTROLLER.init(controller);
     info!("Setup access point '{}' is up", access_point.ssid);
 
     let seed = u64::from(trng.random()) << 32 | u64::from(trng.random());
@@ -111,7 +108,13 @@ pub async fn run(
 
     // Phones open several connections at once while probing for a captive
     // portal; a single-connection server makes them time out and give up.
-    let portal = Portal { stack, networks, store: Mutex::new(store), pending: Mutex::new(None) };
+    let portal = Portal {
+        stack,
+        networks,
+        store: Mutex::new(store),
+        pending: Mutex::new(None),
+        controller: Mutex::new(Some(controller)),
+    };
     join3(portal.serve(), portal.serve(), portal.serve()).await;
     unreachable!()
 }
@@ -244,6 +247,8 @@ struct Portal {
     store: Mutex<NoopRawMutex, Store>,
     /// Accepted settings, written once their confirmation page has been sent.
     pending: Mutex<NoopRawMutex, Option<Credentials>>,
+    /// Owning this keeps WiFi up; dropping it takes the access point down.
+    controller: Mutex<NoopRawMutex, Option<WifiController<'static>>>,
 }
 
 struct Request<'a> {
@@ -280,6 +285,12 @@ impl Portal {
             if restart && let Some(credentials) = self.pending.lock().await.take() {
                 // Time for the page to reach the phone and the screen to update.
                 Timer::after(Duration::from_millis(1500)).await;
+                // Take the access point down properly instead of just
+                // vanishing in the reset: stopping WiFi disassociates the
+                // phone, so it goes back to its own network right away rather
+                // than hanging on to this one until it times out.
+                drop(self.controller.lock().await.take());
+                Timer::after(Duration::from_millis(300)).await;
                 // No `.await` from here on; see `state::halt_ui_core`.
                 if !state::halt_ui_core() {
                     warn!("UI core did not stop; writing anyway");
