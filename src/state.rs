@@ -5,6 +5,7 @@
 //! small `Copy` snapshot, and a Slint timer on the UI side polls it.
 
 use core::cell::Cell;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -31,8 +32,8 @@ pub enum SetupStage {
     /// A phone has joined the access point but not opened the form yet.
     ClientJoined,
     FormOpened,
-    /// Settings are in flash; the device is about to restart.
-    Saved,
+    /// A valid form came in; it is being written and the device will restart.
+    Saving,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,6 +73,48 @@ pub static REFRESH: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// Raised by the UI to forget the stored settings and restart into setup.
 /// Flash is only ever written from the network core, so this goes through it.
 pub static RECONFIGURE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+static UI_HALT_REQUESTED: AtomicBool = AtomicBool::new(false);
+static UI_HALTED: AtomicBool = AtomicBool::new(false);
+
+/// Stop the UI core for good, ahead of a flash write and the restart that
+/// always follows one. Returns whether it confirmed.
+///
+/// A flash write stalls the other core wherever it happens to be. If that is
+/// inside a critical section, the stalled core keeps the global lock and the
+/// writing core deadlocks the moment it wants it. So the UI core is asked to
+/// stop by itself first, at a point where it holds nothing.
+///
+/// Deliberately blocking, and the caller must stay blocking until it resets:
+/// the embassy timer interrupt is serviced by the UI core, so once that core
+/// stops no `Timer` on this one ever fires again, timeouts included.
+pub fn halt_ui_core() -> bool {
+    UI_HALT_REQUESTED.store(true, Ordering::SeqCst);
+    // Reads a hardware counter; needs no interrupt.
+    let started = esp_hal::time::Instant::now();
+    while started.elapsed() < esp_hal::time::Duration::from_secs(3) {
+        if UI_HALTED.load(Ordering::SeqCst) {
+            return true;
+        }
+        core::hint::spin_loop();
+    }
+    false
+}
+
+/// Called by the UI core from its timer, which is such a point: no locks
+/// held, no display transfer in flight. Does not return once asked to halt.
+pub fn halt_here_if_requested() {
+    if !UI_HALT_REQUESTED.load(Ordering::SeqCst) {
+        return;
+    }
+    // An interrupt handler could take the lock just as well as this code, so
+    // they go first. Plain register write: no lock involved in turning them off.
+    esp_hal::xtensa_lx::interrupt::disable();
+    UI_HALTED.store(true, Ordering::SeqCst);
+    loop {
+        core::hint::spin_loop();
+    }
+}
 
 pub fn snapshot() -> Snapshot {
     SNAPSHOT.lock(Cell::get)

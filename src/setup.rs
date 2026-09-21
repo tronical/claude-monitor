@@ -111,7 +111,7 @@ pub async fn run(
 
     // Phones open several connections at once while probing for a captive
     // portal; a single-connection server makes them time out and give up.
-    let portal = Portal { stack, networks, store: Mutex::new(store) };
+    let portal = Portal { stack, networks, store: Mutex::new(store), pending: Mutex::new(None) };
     join3(portal.serve(), portal.serve(), portal.serve()).await;
     unreachable!()
 }
@@ -242,6 +242,8 @@ struct Portal {
     stack: Stack<'static>,
     networks: Vec<String>,
     store: Mutex<NoopRawMutex, Store>,
+    /// Accepted settings, written once their confirmation page has been sent.
+    pending: Mutex<NoopRawMutex, Option<Credentials>>,
 }
 
 struct Request<'a> {
@@ -263,7 +265,7 @@ impl Portal {
                 continue;
             }
 
-            let saved = match with_timeout(Duration::from_secs(10), read_request(&mut socket, &mut request)).await {
+            let restart = match with_timeout(Duration::from_secs(10), read_request(&mut socket, &mut request)).await {
                 Ok(Some(len)) => match parse_request(&request[..len]) {
                     Some(request) => self.respond(&mut socket, &request).await,
                     None => false,
@@ -275,16 +277,26 @@ impl Portal {
             let _ = with_timeout(Duration::from_secs(2), socket.flush()).await;
             socket.abort();
 
-            if saved {
-                // Long enough for the confirmation page to reach the phone and
-                // for the screen to say what is happening.
-                Timer::after(Duration::from_secs(3)).await;
+            if restart && let Some(credentials) = self.pending.lock().await.take() {
+                // Time for the page to reach the phone and the screen to update.
+                Timer::after(Duration::from_millis(1500)).await;
+                // No `.await` from here on; see `state::halt_ui_core`.
+                if !state::halt_ui_core() {
+                    warn!("UI core did not stop; writing anyway");
+                }
+                // `try_lock`, not `lock().await`: nothing else holds it, and
+                // nothing may wait any more.
+                let saved = self.store.try_lock().map(|mut store| store.save(&credentials));
+                if !matches!(saved, Ok(Ok(()))) {
+                    // Nothing was stored, so the restart lands in setup again.
+                    warn!("Settings were not saved");
+                }
                 esp_hal::system::software_reset();
             }
         }
     }
 
-    /// Returns whether settings were saved and the device should restart.
+    /// Returns whether a valid form was accepted into `pending`.
     async fn respond(&self, socket: &mut TcpSocket<'_>, request: &Request<'_>) -> bool {
         let for_us = request.host.split(':').next() == Some("192.168.4.1");
         match (request.method, request.path) {
@@ -296,15 +308,16 @@ impl Portal {
             }
             ("POST", "/save") => match Credentials::from_form(request.body) {
                 Ok(credentials) => {
-                    if self.store.lock().await.save(&credentials).is_err() {
-                        send(socket, "500 Internal Server Error", "", &page(SAVE_FAILED)).await;
-                        return false;
-                    }
-                    state::update(|s| s.link = Link::Setup(SetupStage::Saved));
+                    info!("Setup form accepted for network '{}'", credentials.ssid);
+                    state::update(|s| s.link = Link::Setup(SetupStage::Saving));
+                    // Answer first. Once the UI core is stopped for the write
+                    // there are no timers, and with them no reliable network.
                     send(socket, "200 OK", "", &page(&saved_page(&credentials.ssid))).await;
+                    *self.pending.lock().await = Some(credentials);
                     true
                 }
                 Err(invalid) => {
+                    info!("Setup form rejected: {invalid:?}");
                     // Only the network name is echoed back. The secrets stay
                     // out of the response even when the form has to be redone.
                     let ssid = form_field(request.body, "ssid");
@@ -362,14 +375,12 @@ logged in, and paste what it prints.</p>
     }
 }
 
-const SAVE_FAILED: &str = "<h1>Could not save</h1><p>Writing to flash failed. Go back and try again.</p>";
-
 fn saved_page(ssid: &str) -> String {
     format!(
-        "<h1>Saved</h1><p>The display is restarting and will join <b>{}</b>. \
+        "<h1>Got it</h1><p>The display is saving this and restarting to join <b>{}</b>. \
          This setup network is going away; your phone will return to its usual WiFi.</p>\
-         <p>If the display cannot connect, hold a finger on its screen for three seconds \
-         to start over.</p>",
+         <p>If it shows the setup code again, saving failed: repeat these steps. If it cannot \
+         connect, hold a finger on its screen for three seconds to start over.</p>",
         html_escape(ssid)
     )
 }

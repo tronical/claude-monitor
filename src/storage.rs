@@ -32,7 +32,10 @@ pub struct Store {
 impl Store {
     pub fn new(flash: FLASH<'static>) -> Self {
         // Writing flash stalls every instruction fetch from it. The other core
-        // runs from flash too, so it has to be parked for the duration.
+        // runs from flash too, so it has to be parked for the duration. Parking
+        // is only safe once that core has stopped itself: writers must go
+        // through `state::halt_ui_core` first. Reads at boot happen before the
+        // second core exists.
         Self { flash: FlashStorage::new(flash).multicore_auto_park() }
     }
 

@@ -110,9 +110,12 @@ pub async fn run(
 async fn reconfigure_task(mut store: Store) {
     state::RECONFIGURE.wait().await;
     info!("Reconfiguration requested");
-    if store.request_setup().is_ok() {
-        esp_hal::system::software_reset();
+    if !state::halt_ui_core() {
+        warn!("UI core did not stop; writing anyway");
     }
+    let _ = store.request_setup();
+    // The UI core is gone either way, so restarting is the only way forward.
+    esp_hal::system::software_reset();
 }
 
 #[embassy_executor::task]

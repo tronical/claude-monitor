@@ -134,6 +134,7 @@ fn main() -> ! {
         slint::TimerMode::Repeated,
         core::time::Duration::from_millis(500),
         move || {
+            state::halt_here_if_requested();
             if let Some(window) = weak_window.upgrade() {
                 match &setup_screen {
                     Some(setup_screen) => setup_screen.present(&window, &state::snapshot()),
@@ -203,7 +204,9 @@ impl SetupScreen {
                 "Fill in the form on your phone",
                 String::from("Closed it? Scan again, or browse to 192.168.4.1"),
             ),
-            SetupStage::Saved => (None, "DONE", "Saved", String::from("Restarting to join your WiFi.")),
+            SetupStage::Saving => {
+                (None, "DONE", "Saving", String::from("Restarting to join your WiFi."))
+            }
         };
 
         window.set_setup_mode(true);
