@@ -28,7 +28,7 @@ use esp_hal::rng::Trng;
 use esp_radio::wifi::ap::AccessPointConfig;
 use esp_radio::wifi::{AuthenticationMethod, Config as WifiConfig, WifiController};
 use leasehund::{DhcpServer, TransactionEvent};
-use log::{info, warn};
+use log::{debug, info, warn};
 use static_cell::StaticCell;
 
 use crate::config::{Credentials, html_escape, url_decode};
@@ -137,7 +137,7 @@ async fn scan(controller: &mut WifiController<'static>) -> Vec<String> {
         }
     }
     names.truncate(12);
-    info!("Scan found {} networks", names.len());
+    debug!("Scan found {} networks", names.len());
     names
 }
 
@@ -154,7 +154,7 @@ async fn dhcp_task(stack: Stack<'static>) {
     server
         .run_with_callback(stack, |event| {
             if let TransactionEvent::Leased(ip, _) = event {
-                info!("Setup client joined as {ip}");
+                debug!("Setup client joined as {ip}");
                 state::update(|s| {
                     if s.link == Link::Setup(SetupStage::WaitingForClient) {
                         s.link = Link::Setup(SetupStage::ClientJoined);

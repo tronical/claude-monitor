@@ -1,5 +1,7 @@
 [env]
-ESP_LOG = "INFO"
+# Quiet by default: warnings and errors only. For development, the environment
+# wins over this, e.g. `ESP_LOG=debug cargo run --release` for per-poll lines.
+ESP_LOG = "WARN"
 
 [target.xtensa-esp32s3-none-elf]
 runner = "espflash flash --monitor --flash-size 16mb"

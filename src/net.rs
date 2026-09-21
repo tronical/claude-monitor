@@ -15,7 +15,7 @@ use esp_hal::peripherals::WIFI;
 use esp_hal::rng::Trng;
 use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{Config as WifiConfig, Interface, WifiController};
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use mbedtls_rs::{
     Certificate, ClientSessionConfig, Session, SessionConfig, SessionError, Tls, TlsReference,
     X509,
@@ -144,7 +144,7 @@ async fn connection_task(
         info!("Connecting to WiFi network '{}'", credentials.ssid);
         match controller.connect_async().await {
             Ok(_) => {
-                info!("WiFi associated");
+                debug!("WiFi associated");
                 state::update(|s| s.link = Link::NoAddress);
                 if let Err(e) = controller.wait_for_disconnect_async().await {
                     warn!("WiFi disconnect wait failed: {e:?}");
@@ -183,7 +183,7 @@ async fn poll_loop(
 
         let wait = match result {
             Ok(reading) => {
-                info!(
+                debug!(
                     "Usage: session {}% weekly {}% ({} ms)",
                     reading.session_pct,
                     reading.weekly_pct,

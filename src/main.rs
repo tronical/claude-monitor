@@ -27,7 +27,7 @@ use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::rng::{Trng, TrngSource};
 use esp_hal::system::Stack;
 use esp_hal::timer::timg::TimerGroup;
-use log::info;
+use log::{debug, info};
 use qrcodegen_no_heap::{QrCode, QrCodeEcc, Version};
 use slint::{ComponentHandle, Image, Rgb8Pixel, SharedPixelBuffer};
 use static_cell::StaticCell;
@@ -119,7 +119,7 @@ fn main() -> ! {
             });
         },
     );
-    info!("Network core started");
+    debug!("Network core started");
 
     let window = MainWindow::new().expect("creating the window");
     window.on_refresh(|| state::REFRESH.signal(()));

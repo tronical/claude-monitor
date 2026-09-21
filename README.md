@@ -101,7 +101,9 @@ the roots in `certs/`; see `certs/README.md` for the one thing it cannot check.
   `usage.rs`.
 - `src/storage.rs` — the settings record in the `nvs` flash partition.
 - `src/main.rs` — startup, core split, and turning snapshots into UI text.
-- `tools/monitor.py` — resets the board and prints its log. `espflash monitor`
+- `tools/monitor.py` — resets the board and prints its log. The firmware only
+  logs warnings and errors by default; build with `ESP_LOG=info` (or `debug`
+  for a line per poll) to see more. `espflash monitor`
   cannot attach to the already-running app on this board; this can:
   `tools/monitor.py /dev/cu.usbmodem1101 30`. Add `noreset` to attach without
   restarting it, which matters in setup mode where a restart changes the
