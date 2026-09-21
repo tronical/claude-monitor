@@ -24,14 +24,13 @@ cargo run --release        # builds, flashes, and opens the serial monitor
 
 `secrets.env` is git-ignored. Its values are compiled into the firmware, so
 anyone with the board can read them out of flash; treat the box like a logged-in
-laptop. Revoke the token from your Claude account settings if the box goes missing.
+laptop, and revoke the token if the box goes missing.
 
 ### Why `claude setup-token`
 
-Claude Code's own credential in `~/.claude/.credentials.json` rotates every few
-hours, so a device holding a copy of it is soon locked out. `claude setup-token`
-issues a long-lived (one year) subscription token instead, which the device can
-keep.
+Claude Code's own credential in `~/.claude/.credentials.json` rotates regularly,
+so a device holding a copy of it is soon locked out. `claude setup-token` issues
+a long-lived (one year) subscription token instead, which the device can keep.
 
 ## How it works
 
