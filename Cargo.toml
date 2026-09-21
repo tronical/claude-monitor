@@ -1,0 +1,60 @@
+[package]
+name = "claude-monitor"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Standalone Claude subscription usage display for the ESP32-S3-BOX-3"
+
+[[bin]]
+name = "claude-monitor"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+# Slint and its board support come from the same upstream commit: the board
+# support crate is not published and pins `slint` to an exact version.
+slint = { git = "https://github.com/slint-ui/slint", rev = "7493eb5d145305802bec2172c6e513b720f003f8", default-features = false, features = [
+  "compat-1-2",
+  "libm",
+  "renderer-software",
+  "unsafe-single-threaded",
+] }
+mcu-board-support = { git = "https://github.com/slint-ui/slint", rev = "7493eb5d145305802bec2172c6e513b720f003f8", features = ["esp32-s3-box-3"] }
+
+# The esp stack is held on the esp-hal 1.1 line, which is what the Slint board
+# support pins. esp-radio 0.18 / esp-rtos 0.3 are the matching releases.
+esp-hal = { version = "~1.1.1", features = ["esp32s3", "unstable"] }
+esp-alloc = { version = "0.10.0", features = ["esp32s3"] }
+esp-rtos = { version = "0.3.0", features = ["embassy", "esp-alloc", "esp-radio", "esp32s3", "log-04"] }
+# esp-rom-sys 0.1.5 moved to the esp-hal 1.2 PAC; left floating it drags a
+# second `esp32s3` crate into the build.
+esp-rom-sys = "=0.1.4"
+esp-radio = { version = "0.18.0", features = ["esp-alloc", "esp32s3", "log-04", "unstable", "wifi"] }
+
+embassy-executor = "0.10.0"
+embassy-time = "0.5.1"
+embassy-futures = "0.1.2"
+embassy-sync = "0.8.0"
+embassy-net = { version = "0.9", features = ["dhcpv4", "dns", "medium-ethernet", "proto-ipv4", "tcp"] }
+
+# TLS with real chain and hostname verification; the device sends a bearer
+# token, so an unverified TLS stack is not an option. No chip feature: hardware
+# crypto acceleration needs esp-hal 1.2, and one request a minute does not.
+mbedtls-rs = { version = "0.3.0", features = ["log"] }
+
+log = "0.4.27"
+static_cell = "2.1.1"
+heapless = "0.9"
+
+[build-dependencies]
+slint-build = { git = "https://github.com/slint-ui/slint", rev = "7493eb5d145305802bec2172c6e513b720f003f8" }
+
+[profile.dev]
+# The default debug profile is too slow and too big for the device.
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug = 2
+lto = "fat"
+opt-level = "s"

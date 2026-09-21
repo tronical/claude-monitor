@@ -1,0 +1,197 @@
+// Claude usage display for the ESP32-S3-BOX-3 (320x240).
+//
+// Only rectangles and text: the MCU software renderer draws those line by
+// line without a framebuffer, which is what the board support relies on.
+
+global Palette {
+    out property <color> background: #141413;
+    out property <color> surface: #1f1e1d;
+    out property <color> track: #30302e;
+    out property <color> text: #faf9f5;
+    out property <color> muted: #9c9a92;
+    out property <color> accent: #d97757;
+    out property <color> caution: #e0a33e;
+    out property <color> danger: #e5534b;
+    out property <color> ok: #6fb37a;
+}
+
+component UsageMeter inherits Rectangle {
+    in property <string> title;
+    in property <string> window;
+    in property <bool> known;
+    in property <int> percent;
+    in property <string> reset-text;
+    // How far through the window we are, 0..1; negative when unknown.
+    in property <float> elapsed: -1;
+
+    property <color> level-color: root.percent >= 90 ? Palette.danger
+        : root.percent >= 70 ? Palette.caution
+        : Palette.accent;
+
+    background: Palette.surface;
+    border-radius: 10px;
+
+    VerticalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        padding-top: 9px;
+        padding-bottom: 11px;
+        spacing: 6px;
+
+        HorizontalLayout {
+            spacing: 6px;
+
+            VerticalLayout {
+                alignment: end;
+                spacing: 1px;
+
+                Text {
+                    text: root.title;
+                    color: Palette.text;
+                    font-size: 13px;
+                    font-weight: 700;
+                    letter-spacing: 1px;
+                }
+
+                Text {
+                    text: root.known ? root.reset-text : root.window;
+                    color: Palette.muted;
+                    font-size: 12px;
+                }
+            }
+
+            Text {
+                horizontal-alignment: right;
+                vertical-alignment: bottom;
+                text: root.known ? "\{root.percent}%" : "--";
+                color: root.known ? root.level-color : Palette.muted;
+                font-size: 34px;
+                font-weight: 700;
+            }
+        }
+
+        bar := Rectangle {
+            height: 12px;
+            border-radius: 6px;
+            background: Palette.track;
+            clip: true;
+
+            Rectangle {
+                x: 0;
+                width: root.known ? parent.width * clamp(root.percent, 0, 100) / 100 : 0;
+                border-radius: 6px;
+                background: root.level-color;
+
+                animate width {
+                    duration: 400ms;
+                    easing: ease-out;
+                }
+            }
+
+            // Where an even burn rate would be by now: fill past the tick
+            // means the window runs out before it resets.
+            if root.known && root.elapsed >= 0: Rectangle {
+                x: clamp(parent.width * root.elapsed - 1px, 0px, parent.width - 2px);
+                width: 2px;
+                background: Palette.text;
+                opacity: 0.85;
+            }
+        }
+    }
+}
+
+export component MainWindow inherits Window {
+    in property <bool> online;
+    in property <string> link-text: "STARTING";
+    in property <bool> usage-known;
+    in property <int> session-percent;
+    in property <int> weekly-percent;
+    in property <string> session-reset;
+    in property <string> weekly-reset;
+    in property <float> session-elapsed: -1;
+    in property <float> weekly-elapsed: -1;
+    in property <string> summary: "WAITING FOR WIFI";
+    in property <bool> warning;
+
+    callback refresh();
+
+    width: 320px;
+    height: 240px;
+    background: Palette.background;
+    default-font-size: 12px;
+
+    VerticalLayout {
+        padding: 10px;
+        spacing: 8px;
+
+        HorizontalLayout {
+            height: 18px;
+            spacing: 6px;
+
+            Text {
+                vertical-alignment: center;
+                text: "CLAUDE USAGE";
+                color: Palette.accent;
+                font-size: 13px;
+                font-weight: 700;
+                letter-spacing: 2px;
+            }
+
+            Text {
+                horizontal-alignment: right;
+                vertical-alignment: center;
+                text: root.link-text;
+                color: Palette.muted;
+                font-size: 11px;
+                letter-spacing: 1px;
+            }
+
+            VerticalLayout {
+                alignment: center;
+
+                Rectangle {
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 4px;
+                    background: root.online ? Palette.ok : Palette.caution;
+                }
+            }
+        }
+
+        UsageMeter {
+            title: "SESSION";
+            window: "5 hour window";
+            known: root.usage-known;
+            percent: root.session-percent;
+            reset-text: root.session-reset;
+            elapsed: root.session-elapsed;
+        }
+
+        UsageMeter {
+            title: "WEEK";
+            window: "7 day window";
+            known: root.usage-known;
+            percent: root.weekly-percent;
+            reset-text: root.weekly-reset;
+            elapsed: root.weekly-elapsed;
+        }
+
+        Text {
+            height: 16px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            text: root.summary;
+            color: root.warning ? Palette.danger : Palette.muted;
+            font-size: 12px;
+            letter-spacing: 1px;
+            overflow: elide;
+        }
+    }
+
+    // Tap anywhere to poll right away instead of waiting for the next minute.
+    TouchArea {
+        clicked => {
+            root.refresh();
+        }
+    }
+}

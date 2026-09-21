@@ -1,0 +1,4 @@
+/target
+# WiFi credentials and the Claude OAuth token; see secrets.env.example
+/secrets.env
+.DS_Store
