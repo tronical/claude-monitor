@@ -1,7 +1,8 @@
 // Claude usage display for the ESP32-S3-BOX-3 (320x240).
 //
-// Only rectangles and text: the MCU software renderer draws those line by
-// line without a framebuffer, which is what the board support relies on.
+// Rectangles, text and one unscaled image: the MCU software renderer draws
+// those line by line without a framebuffer, which is what the board support
+// relies on.
 
 global Palette {
     out property <color> background: #141413;
@@ -100,6 +101,97 @@ component UsageMeter inherits Rectangle {
     }
 }
 
+component DialogButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary;
+    callback clicked();
+
+    height: 40px;
+    border-radius: 8px;
+    background: touch.pressed ? (root.primary ? Palette.danger.darker(20%) : Palette.track.brighter(30%))
+        : root.primary ? Palette.danger : Palette.track;
+
+    Text {
+        text: root.text;
+        color: Palette.text;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 1px;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// First-run setup: a QR code on the left, what to do with it on the right.
+component SetupScreen inherits Rectangle {
+    in property <image> qr;
+    in property <bool> qr-visible;
+    in property <string> step;
+    in property <string> headline;
+    in property <string> detail;
+
+    background: Palette.background;
+
+    HorizontalLayout {
+        padding: 12px;
+        spacing: 14px;
+
+        if root.qr-visible: VerticalLayout {
+            alignment: center;
+
+            // The white card doubles as the quiet zone scanners need.
+            Rectangle {
+                width: 164px;
+                height: 164px;
+                border-radius: 8px;
+                background: white;
+
+                Image {
+                    // Shown at its natural size: the pixel buffer is already
+                    // an exact multiple of the module count, and resampling a
+                    // QR code is how it stops scanning.
+                    width: self.source.width * 1px;
+                    height: self.source.height * 1px;
+                    source: root.qr;
+                    image-rendering: pixelated;
+                }
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 8px;
+
+            Text {
+                text: root.step;
+                color: Palette.accent;
+                font-size: 12px;
+                font-weight: 700;
+                letter-spacing: 2px;
+            }
+
+            Text {
+                text: root.headline;
+                color: Palette.text;
+                font-size: 16px;
+                font-weight: 700;
+                wrap: word-wrap;
+            }
+
+            Text {
+                text: root.detail;
+                color: Palette.muted;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
+
 export component MainWindow inherits Window {
     in property <bool> online;
     in property <string> link-text: "STARTING";
@@ -113,7 +205,21 @@ export component MainWindow inherits Window {
     in property <string> summary: "WAITING FOR WIFI";
     in property <bool> warning;
 
+    in property <bool> setup-mode;
+    in property <image> setup-qr;
+    in property <bool> setup-qr-visible;
+    in property <string> setup-step;
+    in property <string> setup-headline;
+    in property <string> setup-detail;
+
     callback refresh();
+    /// Forget the stored WiFi and token and restart into setup.
+    callback reconfigure();
+
+    property <bool> confirming;
+    // A long press ends in a release like any other; this keeps that release
+    // from also counting as a tap.
+    property <bool> long-pressed;
 
     width: 320px;
     height: 240px;
@@ -188,10 +294,87 @@ export component MainWindow inherits Window {
         }
     }
 
-    // Tap anywhere to poll right away instead of waiting for the next minute.
-    TouchArea {
+    // Tap anywhere to poll right away instead of waiting for the next minute;
+    // hold for three seconds to reconfigure.
+    touch := TouchArea {
+        enabled: !root.setup-mode && !root.confirming;
+
+        changed pressed => {
+            if self.pressed {
+                root.long-pressed = false;
+            }
+        }
+
         clicked => {
-            root.refresh();
+            if !root.long-pressed {
+                root.refresh();
+            }
+        }
+    }
+
+    Timer {
+        interval: 3s;
+        running: touch.pressed;
+
+        triggered => {
+            root.long-pressed = true;
+            root.confirming = true;
+        }
+    }
+
+    if root.setup-mode: SetupScreen {
+        qr: root.setup-qr;
+        qr-visible: root.setup-qr-visible;
+        step: root.setup-step;
+        headline: root.setup-headline;
+        detail: root.setup-detail;
+    }
+
+    if root.confirming: Rectangle {
+        background: Palette.background.with-alpha(0.92);
+
+        // Swallows touches so nothing underneath reacts.
+        TouchArea { }
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: 10px;
+            alignment: center;
+
+            Text {
+                text: "Set up again?";
+                color: Palette.text;
+                font-size: 18px;
+                font-weight: 700;
+            }
+
+            Text {
+                text: "The display forgets its WiFi network and Claude token, then restarts into setup.";
+                color: Palette.muted;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+
+            HorizontalLayout {
+                padding-top: 10px;
+                spacing: 12px;
+
+                DialogButton {
+                    text: "CANCEL";
+                    clicked => {
+                        root.confirming = false;
+                    }
+                }
+
+                DialogButton {
+                    text: "FORGET";
+                    primary: true;
+                    clicked => {
+                        root.confirming = false;
+                        root.reconfigure();
+                    }
+                }
+            }
         }
     }
 }

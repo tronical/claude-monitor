@@ -15,12 +15,24 @@ use crate::usage::Reading;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Link {
-    /// `secrets.env` was missing or incomplete at build time.
-    NotConfigured,
+    /// First-run setup; see `setup.rs`.
+    Setup(SetupStage),
     Connecting,
     /// Associated, waiting for DHCP.
     NoAddress,
     Online,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SetupStage {
+    /// Scanning for networks and bringing the access point up.
+    Starting,
+    WaitingForClient,
+    /// A phone has joined the access point but not opened the form yet.
+    ClientJoined,
+    FormOpened,
+    /// Settings are in flash; the device is about to restart.
+    Saved,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,6 +68,10 @@ static SNAPSHOT: Mutex<CriticalSectionRawMutex, Cell<Snapshot>> = Mutex::new(Cel
 
 /// Raised by the UI (a tap) to poll now instead of at the next interval.
 pub static REFRESH: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Raised by the UI to forget the stored settings and restart into setup.
+/// Flash is only ever written from the network core, so this goes through it.
+pub static RECONFIGURE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 pub fn snapshot() -> Snapshot {
     SNAPSHOT.lock(Cell::get)

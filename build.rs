@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-/// Settings baked into the firmware. They come from the git-ignored
-/// `secrets.env`, or from the environment, which wins.
+/// Optional settings baked into the firmware, from the git-ignored
+/// `secrets.env` or from the environment, which wins. Without them the device
+/// starts in setup mode and is configured from a phone instead.
 const SETTINGS: [&str; 3] = ["WIFI_SSID", "WIFI_PASSWORD", "CLAUDE_OAUTH_TOKEN"];
 
 fn main() {
@@ -12,12 +13,6 @@ fn main() {
     for name in SETTINGS {
         println!("cargo:rerun-if-env-changed={name}");
         let value = std::env::var(name).ok().or_else(|| from_file.get(name).cloned());
-        if value.as_deref().unwrap_or_default().is_empty() && name != "WIFI_PASSWORD" {
-            println!(
-                "cargo:warning={name} is not set: copy secrets.env.example to secrets.env. \
-                 The firmware will build but only show a configuration hint."
-            );
-        }
         println!("cargo:rustc-env={name}={}", value.unwrap_or_default());
     }
 

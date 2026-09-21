@@ -22,14 +22,19 @@ use mbedtls_rs::{
 };
 use static_cell::StaticCell;
 
+use crate::config::Credentials;
+use crate::setup::{self, AccessPoint};
 use crate::state::{self, Link, Problem};
+use crate::storage::Store;
 use crate::usage::{self, Outcome};
 
-const WIFI_SSID: &str = env!("WIFI_SSID");
-const WIFI_PASSWORD: &str = env!("WIFI_PASSWORD");
-/// A long-lived subscription token from `claude setup-token`. It is only ever
-/// written into the TLS session: never logged, never shown on the display.
-const OAUTH_TOKEN: &str = env!("CLAUDE_OAUTH_TOKEN");
+/// What the network core should do, decided at boot from what is in flash.
+pub enum Mode {
+    /// The token in here is only ever written into the TLS session: never
+    /// logged, never shown on the display.
+    Run(&'static Credentials),
+    Setup(&'static AccessPoint),
+}
 
 const POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// A failed poll is retried sooner than a good one is repeated.
@@ -49,17 +54,22 @@ const CA_BUNDLE: &CStr =
         Err(_) => panic!("certs/roots.pem contains a NUL byte"),
     };
 
-pub fn configured() -> bool {
-    !WIFI_SSID.is_empty() && !OAUTH_TOKEN.is_empty()
-}
-
 /// Bring the network up and poll forever. Spawned once, on the second core.
 #[embassy_executor::task]
-pub async fn run(spawner: Spawner, wifi: WIFI<'static>, trng: &'static mut Trng) {
-    if !configured() {
-        state::update(|s| s.link = Link::NotConfigured);
-        return;
-    }
+pub async fn run(
+    spawner: Spawner,
+    wifi: WIFI<'static>,
+    trng: &'static mut Trng,
+    store: Store,
+    mode: Mode,
+) {
+    let credentials = match mode {
+        Mode::Run(credentials) => credentials,
+        Mode::Setup(access_point) => {
+            setup::run(spawner, wifi, trng, access_point, store).await
+        }
+    };
+    spawner.spawn(reconfigure_task(store).unwrap());
 
     // The controller is created here rather than on the first core because
     // esp-radio pins its WiFi task to whichever core calls this.
@@ -89,22 +99,37 @@ pub async fn run(spawner: Spawner, wifi: WIFI<'static>, trng: &'static mut Trng)
         }
     };
 
-    spawner.spawn(connection_task(controller).unwrap());
+    spawner.spawn(connection_task(controller, credentials).unwrap());
     spawner.spawn(net_task(runner).unwrap());
 
-    poll_loop(stack, tls.reference()).await
+    poll_loop(stack, tls.reference(), credentials).await
+}
+
+/// "Reconfigure" from the UI: leave a marker in flash and restart into setup.
+#[embassy_executor::task]
+async fn reconfigure_task(mut store: Store) {
+    state::RECONFIGURE.wait().await;
+    info!("Reconfiguration requested");
+    if store.request_setup().is_ok() {
+        esp_hal::system::software_reset();
+    }
 }
 
 #[embassy_executor::task]
-async fn net_task(mut runner: Runner<'static, Interface<'static>>) {
+pub async fn net_task(mut runner: Runner<'static, Interface<'static>>) {
     runner.run().await
 }
 
 /// Keep the station associated, reconnecting for as long as it takes.
 #[embassy_executor::task]
-async fn connection_task(mut controller: WifiController<'static>) {
+async fn connection_task(
+    mut controller: WifiController<'static>,
+    credentials: &'static Credentials,
+) {
     let config = WifiConfig::Station(
-        StationConfig::default().with_ssid(WIFI_SSID).with_password(String::from(WIFI_PASSWORD)),
+        StationConfig::default()
+            .with_ssid(credentials.ssid.as_str())
+            .with_password(credentials.password.clone()),
     );
     if let Err(e) = controller.set_config(&config) {
         error!("WiFi configuration rejected: {e:?}");
@@ -113,7 +138,7 @@ async fn connection_task(mut controller: WifiController<'static>) {
 
     loop {
         state::update(|s| s.link = Link::Connecting);
-        info!("Connecting to WiFi network '{WIFI_SSID}'");
+        info!("Connecting to WiFi network '{}'", credentials.ssid);
         match controller.connect_async().await {
             Ok(_) => {
                 info!("WiFi associated");
@@ -129,7 +154,11 @@ async fn connection_task(mut controller: WifiController<'static>) {
     }
 }
 
-async fn poll_loop(stack: Stack<'static>, tls: TlsReference<'static>) -> ! {
+async fn poll_loop(
+    stack: Stack<'static>,
+    tls: TlsReference<'static>,
+    credentials: &'static Credentials,
+) -> ! {
     loop {
         stack.wait_config_up().await;
         if let Some(config) = stack.config_v4() {
@@ -141,7 +170,7 @@ async fn poll_loop(stack: Stack<'static>, tls: TlsReference<'static>) -> ! {
         });
 
         let started = Instant::now();
-        let result = match with_timeout(REQUEST_TIMEOUT, probe(stack, tls)).await {
+        let result = match with_timeout(REQUEST_TIMEOUT, probe(stack, tls, &credentials.token)).await {
             Ok(result) => result,
             Err(_) => Err(Problem::Timeout),
         };
@@ -194,7 +223,11 @@ async fn wait_link_down(stack: Stack<'static>) {
 }
 
 /// One HTTPS request; only the response head is ever read.
-async fn probe(stack: Stack<'static>, tls: TlsReference<'_>) -> Result<usage::Reading, Problem> {
+async fn probe(
+    stack: Stack<'static>,
+    tls: TlsReference<'_>,
+    token: &str,
+) -> Result<usage::Reading, Problem> {
     let address = stack
         .dns_query(usage::API_HOST, DnsQueryType::A)
         .await
@@ -220,14 +253,14 @@ async fn probe(stack: Stack<'static>, tls: TlsReference<'_>) -> Result<usage::Re
         Problem::Tls
     })?;
 
-    let mut request = String::with_capacity(512 + OAUTH_TOKEN.len());
+    let mut request = String::with_capacity(512 + token.len());
     // The token is an OAuth token, so it goes on `Authorization: Bearer` with
     // the OAuth beta header, not on `x-api-key`.
     let _ = write!(
         request,
         "POST /v1/messages HTTP/1.1\r\n\
          Host: {host}\r\n\
-         Authorization: Bearer {OAUTH_TOKEN}\r\n\
+         Authorization: Bearer {token}\r\n\
          anthropic-version: 2023-06-01\r\n\
          anthropic-beta: oauth-2025-04-20\r\n\
          User-Agent: claude-monitor/{version}\r\n\

@@ -698,15 +698,19 @@ dependencies = [
  "embassy-net",
  "embassy-sync 0.8.0",
  "embassy-time",
+ "embedded-storage",
  "esp-alloc",
  "esp-hal",
  "esp-radio",
  "esp-rom-sys",
  "esp-rtos",
+ "esp-storage",
  "heapless 0.9.3",
+ "leasehund",
  "log",
  "mbedtls-rs",
  "mcu-board-support",
+ "qrcodegen-no-heap",
  "slint",
  "slint-build",
  "static_cell",
@@ -2013,6 +2017,21 @@ dependencies = [
  "portable-atomic",
  "riscv",
  "xtensa-lx",
+]
+
+[[package]]
+name = "esp-storage"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cf2b3f00c9f94b27c62a4f5296b19470c3a083c687c8146e554a459f9bee596"
+dependencies = [
+ "document-features",
+ "embedded-storage",
+ "esp-hal",
+ "esp-hal-procmacros",
+ "esp-metadata-generated",
+ "esp-rom-sys",
+ "esp-sync",
 ]
 
 [[package]]
@@ -3584,6 +3603,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
+name = "leasehund"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a0b24b66712c31effc839b3722ea7033db2e9319d810a76131d522713a7d857"
+dependencies = [
+ "embassy-net",
+ "embassy-time",
+ "heapless 0.9.3",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4768,6 +4798,12 @@ name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
+
+[[package]]
+name = "qrcodegen-no-heap"
+version = "1.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0e2c0bf8be8a1c4a4f48973dabf26943f05da2bfc2d3180aae62409dbba6f0c"
 
 [[package]]
 name = "quick-error"

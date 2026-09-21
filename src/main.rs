@@ -10,12 +10,17 @@
 
 extern crate alloc;
 
+mod config;
 mod net;
+mod setup;
 mod state;
+mod storage;
 mod usage;
 
+use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
+use core::cell::Cell;
 
 use embassy_time::Instant;
 use esp_hal::interrupt::software::SoftwareInterruptControl;
@@ -23,10 +28,15 @@ use esp_hal::rng::{Trng, TrngSource};
 use esp_hal::system::Stack;
 use esp_hal::timer::timg::TimerGroup;
 use log::info;
-use slint::ComponentHandle;
+use qrcodegen_no_heap::{QrCode, QrCodeEcc, Version};
+use slint::{ComponentHandle, Image, Rgb8Pixel, SharedPixelBuffer};
 use static_cell::StaticCell;
 
-use crate::state::{Link, Problem, Snapshot};
+use crate::config::{Credentials, wifi_qr_escape};
+use crate::net::Mode;
+use crate::setup::AccessPoint;
+use crate::state::{Link, Problem, SetupStage, Snapshot};
+use crate::storage::{Store, Stored};
 
 slint::include_modules!();
 
@@ -67,6 +77,35 @@ fn main() -> ! {
     static TRNG: StaticCell<Trng> = StaticCell::new();
     let trng = TRNG.init(Trng::try_new().expect("TRNG source is alive"));
 
+    // Settings saved by the setup form win over ones baked in at build time,
+    // and an explicit "set up again" wins over both.
+    let mut store = Store::new(peripherals.FLASH);
+    let built_in = Credentials {
+        ssid: env!("WIFI_SSID").into(),
+        password: env!("WIFI_PASSWORD").into(),
+        token: env!("CLAUDE_OAUTH_TOKEN").into(),
+    };
+    let credentials = match store.load() {
+        Stored::Credentials(stored) => Some(stored),
+        Stored::SetupRequested => None,
+        Stored::Nothing => built_in.validate().is_ok().then_some(built_in),
+    };
+    let access_point: Option<&'static AccessPoint> = match credentials {
+        Some(_) => None,
+        None => Some(Box::leak(Box::new(AccessPoint::generate(trng)))),
+    };
+    let mode = match (credentials, access_point) {
+        (Some(credentials), _) => {
+            info!("Using settings for network '{}'", credentials.ssid);
+            Mode::Run(Box::leak(Box::new(credentials)))
+        }
+        (None, Some(access_point)) => {
+            info!("No settings: starting setup as '{}'", access_point.ssid);
+            Mode::Setup(access_point)
+        }
+        (None, None) => unreachable!(),
+    };
+
     let wifi = peripherals.WIFI;
     static NETWORK_STACK: StaticCell<Stack<NETWORK_CORE_STACK>> = StaticCell::new();
     esp_rtos::start_second_core(
@@ -76,7 +115,7 @@ fn main() -> ! {
         move || {
             static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
             EXECUTOR.init(esp_rtos::embassy::Executor::new()).run(|spawner| {
-                spawner.spawn(net::run(spawner, wifi, trng).unwrap());
+                spawner.spawn(net::run(spawner, wifi, trng, store, mode).unwrap());
             });
         },
     );
@@ -84,6 +123,8 @@ fn main() -> ! {
 
     let window = MainWindow::new().expect("creating the window");
     window.on_refresh(|| state::REFRESH.signal(()));
+    window.on_reconfigure(|| state::RECONFIGURE.signal(()));
+    let setup_screen = access_point.map(SetupScreen::new);
 
     // The network core cannot call into Slint, so the UI pulls instead. Twice
     // a second is plenty for minute-granular countdowns.
@@ -94,14 +135,126 @@ fn main() -> ! {
         core::time::Duration::from_millis(500),
         move || {
             if let Some(window) = weak_window.upgrade() {
-                present(&window, &state::snapshot());
+                match &setup_screen {
+                    Some(setup_screen) => setup_screen.present(&window, &state::snapshot()),
+                    None => present(&window, &state::snapshot()),
+                }
             }
         },
     );
-    present(&window, &state::snapshot());
 
     window.run().expect("running the event loop");
     unreachable!("the board support event loop never returns")
+}
+
+/// What the setup screen shows at each stage. The QR codes are rendered once,
+/// up front: they only depend on the access point chosen at boot.
+struct SetupScreen {
+    access_point: &'static AccessPoint,
+    join_qr: Image,
+    portal_qr: Image,
+    shown: Cell<Option<SetupStage>>,
+}
+
+impl SetupScreen {
+    fn new(access_point: &'static AccessPoint) -> Self {
+        let join = format!(
+            "WIFI:T:WPA;S:{};P:{};;",
+            wifi_qr_escape(&access_point.ssid),
+            wifi_qr_escape(&access_point.password)
+        );
+        Self {
+            access_point,
+            join_qr: qr_image(&join),
+            portal_qr: qr_image(setup::PORTAL_URL),
+            shown: Cell::new(None),
+        }
+    }
+
+    fn present(&self, window: &MainWindow, snapshot: &Snapshot) {
+        let Link::Setup(stage) = snapshot.link else {
+            return;
+        };
+        // Replacing the image repaints the whole code; only do it on a change.
+        if self.shown.replace(Some(stage)) == Some(stage) {
+            return;
+        }
+
+        let AccessPoint { ssid, password } = self.access_point;
+        let (qr, step, headline, detail) = match stage {
+            SetupStage::Starting => {
+                (None, "SETUP", "Starting", String::from("Looking for WiFi networks nearby."))
+            }
+            SetupStage::WaitingForClient => (
+                Some(&self.join_qr),
+                "STEP 1 OF 2",
+                "Scan to join the setup WiFi",
+                format!("Network\n{ssid}\n\nPassword\n{password}"),
+            ),
+            SetupStage::ClientJoined => (
+                Some(&self.portal_qr),
+                "STEP 2 OF 2",
+                "Scan to open the setup page",
+                String::from("It may have opened on your phone already.\n\nOr browse to 192.168.4.1"),
+            ),
+            SetupStage::FormOpened => (
+                Some(&self.portal_qr),
+                "STEP 2 OF 2",
+                "Fill in the form on your phone",
+                String::from("Closed it? Scan again, or browse to 192.168.4.1"),
+            ),
+            SetupStage::Saved => (None, "DONE", "Saved", String::from("Restarting to join your WiFi.")),
+        };
+
+        window.set_setup_mode(true);
+        window.set_setup_qr_visible(qr.is_some());
+        if let Some(qr) = qr {
+            window.set_setup_qr(qr.clone());
+        }
+        window.set_setup_step(step.into());
+        window.set_setup_headline(headline.into());
+        window.set_setup_detail(detail.into());
+    }
+}
+
+/// Render `text` as a QR code sized for the 164 px card on the setup screen.
+fn qr_image(text: &str) -> Image {
+    // Version 10 holds a couple of hundred bytes; the payloads are under 60.
+    const MAX_VERSION: Version = Version::new(10);
+    const BUFFER_LEN: usize = MAX_VERSION.buffer_len();
+    /// The card around the code supplies the rest of the quiet zone.
+    const QUIET_MODULES: u32 = 1;
+    const TARGET_PX: u32 = 156;
+
+    let mut scratch = [0u8; BUFFER_LEN];
+    let mut modules = [0u8; BUFFER_LEN];
+    let qr = QrCode::encode_text(
+        text,
+        &mut scratch,
+        &mut modules,
+        QrCodeEcc::Medium,
+        Version::MIN,
+        MAX_VERSION,
+        None,
+        true,
+    )
+    .expect("setup QR payloads fit a version 10 code");
+
+    let size = qr.size() as u32;
+    // A whole number of pixels per module: a resampled QR code does not scan.
+    let scale = (TARGET_PX / (size + 2 * QUIET_MODULES)).max(1);
+    let side = (size + 2 * QUIET_MODULES) * scale;
+
+    let mut pixels = SharedPixelBuffer::<Rgb8Pixel>::new(side, side);
+    for (index, pixel) in pixels.make_mut_slice().iter_mut().enumerate() {
+        let (x, y) = (index as u32 % side, index as u32 / side);
+        let module_x = (x / scale) as i32 - QUIET_MODULES as i32;
+        let module_y = (y / scale) as i32 - QUIET_MODULES as i32;
+        // Out-of-range modules read as light, which is the quiet zone.
+        let shade = if qr.get_module(module_x, module_y) { 0 } else { 255 };
+        *pixel = Rgb8Pixel::new(shade, shade, shade);
+    }
+    Image::from_rgb8(pixels)
 }
 
 /// Push a snapshot into the window's properties.
@@ -109,7 +262,7 @@ fn present(window: &MainWindow, snapshot: &Snapshot) {
     window.set_online(snapshot.link == Link::Online);
     window.set_link_text(
         match snapshot.link {
-            Link::NotConfigured => "NO CONFIG",
+            Link::Setup(_) => "SETUP",
             Link::Connecting => "CONNECTING",
             Link::NoAddress => "NO ADDRESS",
             Link::Online if snapshot.polling => "UPDATING",
@@ -123,9 +276,9 @@ fn present(window: &MainWindow, snapshot: &Snapshot) {
         window.set_warning(snapshot.problem.is_some());
         window.set_summary(
             match (snapshot.link, snapshot.problem) {
-                (Link::NotConfigured, _) => "FILL IN SECRETS.ENV AND REFLASH".into(),
                 (_, Some(problem)) => describe(problem),
                 (Link::Online, None) => "FETCHING USAGE".into(),
+                (_, None) if Instant::now().as_secs() > 45 => "NO WIFI · HOLD SCREEN TO SET UP".into(),
                 (_, None) => "WAITING FOR WIFI".into(),
             }
             .into(),
