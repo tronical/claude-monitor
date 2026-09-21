@@ -164,7 +164,10 @@ async fn poll_loop(
 ) -> ! {
     loop {
         stack.wait_config_up().await;
-        if let Some(config) = stack.config_v4() {
+        // Once per connection, not once per poll.
+        if state::snapshot().link != Link::Online
+            && let Some(config) = stack.config_v4()
+        {
             info!("Got address {}", config.address);
         }
         state::update(|s| {
