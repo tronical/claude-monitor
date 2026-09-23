@@ -106,6 +106,12 @@ fn main() -> ! {
         (None, None) => unreachable!(),
     };
 
+    // A reading carried across the WiFi recovery reset, if this is one.
+    if let Some(held) = net::recovery::take_reading() {
+        info!("Recovered the last reading from before the reset");
+        state::update(|s| s.reading = Some(held));
+    }
+
     let wifi = peripherals.WIFI;
     static NETWORK_STACK: StaticCell<Stack<NETWORK_CORE_STACK>> = StaticCell::new();
     esp_rtos::start_second_core(
@@ -274,7 +280,7 @@ fn present(window: &MainWindow, snapshot: &Snapshot) {
         .into(),
     );
 
-    let Some((reading, received)) = snapshot.reading else {
+    let Some(held) = snapshot.reading else {
         window.set_usage_known(false);
         window.set_warning(snapshot.problem.is_some());
         window.set_summary(
@@ -289,7 +295,8 @@ fn present(window: &MainWindow, snapshot: &Snapshot) {
         return;
     };
 
-    let age = received.elapsed().as_secs();
+    let reading = held.reading;
+    let age = held.age_secs();
     let remaining = |at_fetch: Option<u32>| at_fetch.map(|secs| (secs as u64).saturating_sub(age));
     let session_remaining = remaining(reading.session_reset_in);
     let weekly_remaining = remaining(reading.weekly_reset_in);
@@ -302,7 +309,7 @@ fn present(window: &MainWindow, snapshot: &Snapshot) {
     window.set_session_elapsed(elapsed_fraction(session_remaining, SESSION_WINDOW_SECS));
     window.set_weekly_elapsed(elapsed_fraction(weekly_remaining, WEEKLY_WINDOW_SECS));
 
-    let (summary, warning) = summarize(snapshot, &reading, received, session_remaining);
+    let (summary, warning) = summarize(snapshot, &reading, age, session_remaining);
     window.set_summary(summary.into());
     window.set_warning(warning);
 }
@@ -311,10 +318,9 @@ fn present(window: &MainWindow, snapshot: &Snapshot) {
 fn summarize(
     snapshot: &Snapshot,
     reading: &usage::Reading,
-    received: Instant,
+    age: u64,
     session_remaining: Option<u64>,
 ) -> (String, bool) {
-    let age = received.elapsed().as_secs();
     if let Some(problem @ (Problem::Unauthorized | Problem::NoLimits)) = snapshot.problem {
         return (describe(problem), true);
     }

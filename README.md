@@ -87,6 +87,13 @@ followed by a restart, which makes the answer simple: core 0 halts itself from
 its timer callback, holding nothing, and core 1 then writes and resets without
 waiting on anything (`state::halt_ui_core`).
 
+The WiFi driver can wedge: after some disconnect it answers every reconnect
+with `NoAccessPointFound` although the network is there, and esp-radio 0.18
+has no call to re-initialise it. When connect attempts have failed without a
+break for two minutes the box resets itself, which rebuilds the driver from
+scratch. The last reading rides across in RTC memory, so the display keeps its
+numbers and countdowns (marked stale) instead of going blank.
+
 TLS is mbedtls (via `mbedtls-rs`) with chain and hostname verification against
 the roots in `certs/`; see `certs/README.md` for the one thing it cannot check.
 

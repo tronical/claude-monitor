@@ -49,12 +49,38 @@ pub enum Problem {
     BadResponse,
 }
 
+/// A reading and when it arrived.
+#[derive(Clone, Copy, Debug)]
+pub struct Held {
+    pub reading: Reading,
+    received: Instant,
+    /// How old the reading already was when this boot started: a reading
+    /// carried across the WiFi recovery reset (see `net::RECOVERY`) predates
+    /// the monotonic clock.
+    age_before_boot: u64,
+}
+
+impl Held {
+    pub fn fresh(reading: Reading) -> Self {
+        Self { reading, received: Instant::now(), age_before_boot: 0 }
+    }
+
+    pub fn carried(reading: Reading, age_secs: u64) -> Self {
+        Self { reading, received: Instant::MIN, age_before_boot: age_secs }
+    }
+
+    /// Seconds since the reading was fetched.
+    pub fn age_secs(&self) -> u64 {
+        self.age_before_boot + self.received.elapsed().as_secs()
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Snapshot {
     pub link: Link,
-    /// The last good reading and when it arrived. Kept across later failures
-    /// so the display can keep counting down while saying the data is stale.
-    pub reading: Option<(Reading, Instant)>,
+    /// The last good reading. Kept across later failures so the display can
+    /// keep counting down while saying the data is stale.
+    pub reading: Option<Held>,
     /// Why the most recent poll failed, if it did.
     pub problem: Option<Problem>,
     pub polling: bool,

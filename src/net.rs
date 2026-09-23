@@ -24,7 +24,7 @@ use static_cell::StaticCell;
 
 use crate::config::Credentials;
 use crate::setup::{self, AccessPoint};
-use crate::state::{self, Link, Problem};
+use crate::state::{self, Held, Link, Problem};
 use crate::storage::Store;
 use crate::usage::{self, Outcome};
 
@@ -40,6 +40,12 @@ const POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// A failed poll is retried sooner than a good one is repeated.
 const RETRY_INTERVAL: Duration = Duration::from_secs(15);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Connect attempts failing continuously for this long get the whole box
+/// reset. Seen in the field: after some disconnect the driver answers every
+/// reconnect with `NoAccessPointFound` while the network is plainly there,
+/// and nothing short of re-initialising it (which esp-radio 0.18 offers no
+/// call for) brings it back. A reset does exactly that in a second or two.
+const CONNECT_FAILURE_RESET_AFTER: Duration = Duration::from_secs(120);
 /// Taps closer together than this are ignored; every poll is a real request
 /// against the subscription.
 const MIN_POLL_SPACING: Duration = Duration::from_secs(5);
@@ -139,11 +145,13 @@ async fn connection_task(
         return;
     }
 
+    let mut failing_since: Option<Instant> = None;
     loop {
         state::update(|s| s.link = Link::Connecting);
         info!("Connecting to WiFi network '{}'", credentials.ssid);
         match controller.connect_async().await {
             Ok(_) => {
+                failing_since = None;
                 debug!("WiFi associated");
                 state::update(|s| s.link = Link::NoAddress);
                 if let Err(e) = controller.wait_for_disconnect_async().await {
@@ -151,9 +159,85 @@ async fn connection_task(
                 }
                 warn!("WiFi disconnected");
             }
-            Err(e) => warn!("WiFi connect failed: {e:?}"),
+            Err(e) => {
+                warn!("WiFi connect failed: {e:?}");
+                let since = *failing_since.get_or_insert_with(Instant::now);
+                if since.elapsed() >= CONNECT_FAILURE_RESET_AFTER {
+                    warn!("WiFi has not come back; resetting to re-initialise the driver");
+                    recovery::stash_reading();
+                    esp_hal::system::software_reset();
+                }
+            }
         }
         Timer::after(Duration::from_secs(5)).await;
+    }
+}
+
+/// Carrying the last reading across the recovery reset, so the display keeps
+/// its numbers and countdowns instead of going blank for the reboot.
+pub mod recovery {
+    use embassy_time::Instant;
+
+    use crate::state::{self, Held};
+    use crate::usage::Reading;
+
+    const MAGIC: u32 = 0x5245_4144; // "READ"
+    const NONE: u32 = u32::MAX;
+
+    /// RTC fast memory survives a software reset. Zeroed on power-up only, so
+    /// a record is cleared once it has been picked up; the checksum covers a
+    /// reset landing in the middle of a write.
+    #[esp_hal::ram(unstable(rtc_fast, persistent))]
+    static mut STASH: [u32; 8] = [0; 8];
+
+    pub fn stash_reading() {
+        let Some(held) = state::snapshot().reading else {
+            return;
+        };
+        let Reading { session_pct, weekly_pct, session_reset_in, weekly_reset_in, limited } =
+            held.reading;
+        let age = held.age_secs().min(u32::MAX as u64) as u32;
+        let mut words = [
+            MAGIC,
+            u32::from(session_pct),
+            u32::from(weekly_pct),
+            session_reset_in.unwrap_or(NONE),
+            weekly_reset_in.unwrap_or(NONE),
+            u32::from(limited),
+            age,
+            0,
+        ];
+        words[7] = checksum(&words[..7]);
+        // SAFETY: the network core is the only writer, and it is about to reset
+        // the chip; the reader runs at the next boot, before any task exists.
+        unsafe { STASH = words };
+    }
+
+    /// Take a stashed reading, if this boot follows a recovery reset.
+    pub fn take_reading() -> Option<Held> {
+        // SAFETY: called once, at boot, before the second core is started.
+        let words = unsafe { STASH };
+        unsafe { STASH = [0; 8] };
+        if words[0] != MAGIC || words[7] != checksum(&words[..7]) {
+            return None;
+        }
+        let reset_in = |word: u32| (word != NONE).then_some(word);
+        let reading = Reading {
+            session_pct: words[1].min(100) as u8,
+            weekly_pct: words[2].min(100) as u8,
+            session_reset_in: reset_in(words[3]),
+            weekly_reset_in: reset_in(words[4]),
+            limited: words[5] != 0,
+        };
+        // Plus the reboot itself, which the monotonic clock did not see.
+        let age = u64::from(words[6]) + Instant::now().as_secs();
+        Some(Held::carried(reading, age))
+    }
+
+    fn checksum(words: &[u32]) -> u32 {
+        words.iter().fold(0x811C_9DC5u32, |hash, &word| {
+            (hash ^ word).wrapping_mul(0x0100_0193)
+        })
     }
 }
 
@@ -190,7 +274,7 @@ async fn poll_loop(
                     started.elapsed().as_millis()
                 );
                 state::update(|s| {
-                    s.reading = Some((reading, Instant::now()));
+                    s.reading = Some(Held::fresh(reading));
                     s.problem = None;
                     s.polling = false;
                 });
