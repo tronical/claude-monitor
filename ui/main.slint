@@ -106,7 +106,7 @@ component DialogButton inherits Rectangle {
     in property <bool> primary;
     callback clicked();
 
-    height: 40px;
+    height: 36px;
     border-radius: 8px;
     background: touch.pressed ? (root.primary ? Palette.danger.darker(20%) : Palette.track.brighter(30%))
         : root.primary ? Palette.danger : Palette.track;
@@ -213,10 +213,10 @@ export component MainWindow inherits Window {
     in property <string> setup-detail;
 
     callback refresh();
-    /// Forget the stored WiFi and token and restart into setup.
-    callback reconfigure();
+    /// Restart into setup; with `keep-token` only the WiFi network changes.
+    callback reconfigure(keep-token: bool);
 
-    property <bool> confirming;
+    in-out property <bool> confirming;
     // A long press ends in a release like any other; this keeps that release
     // from also counting as a tap.
     property <bool> long-pressed;
@@ -337,8 +337,8 @@ export component MainWindow inherits Window {
         TouchArea { }
 
         VerticalLayout {
-            padding: 24px;
-            spacing: 10px;
+            padding: 20px;
+            spacing: 8px;
             alignment: center;
 
             Text {
@@ -349,29 +349,37 @@ export component MainWindow inherits Window {
             }
 
             Text {
-                text: "The display forgets its WiFi network and Claude token, then restarts into setup.";
+                text: "The display restarts into setup and you finish on your phone.";
                 color: Palette.muted;
                 font-size: 13px;
                 wrap: word-wrap;
             }
 
-            HorizontalLayout {
-                padding-top: 10px;
-                spacing: 12px;
+            VerticalLayout {
+                padding-top: 6px;
+                spacing: 8px;
+
+                DialogButton {
+                    text: "CHANGE WIFI · KEEP TOKEN";
+                    clicked => {
+                        root.confirming = false;
+                        root.reconfigure(true);
+                    }
+                }
+
+                DialogButton {
+                    text: "CHANGE WIFI AND TOKEN";
+                    primary: true;
+                    clicked => {
+                        root.confirming = false;
+                        root.reconfigure(false);
+                    }
+                }
 
                 DialogButton {
                     text: "CANCEL";
                     clicked => {
                         root.confirming = false;
-                    }
-                }
-
-                DialogButton {
-                    text: "FORGET";
-                    primary: true;
-                    clicked => {
-                        root.confirming = false;
-                        root.reconfigure();
                     }
                 }
             }

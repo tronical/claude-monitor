@@ -15,13 +15,15 @@ use crate::config::{Credentials, MAX_RECORD_LEN};
 const PARTITION_OFFSET: u32 = 0x9000;
 const SECTOR_SIZE: u32 = 4096;
 
-/// Written in place of a record by "reconfigure": forces setup on the next
-/// boot even when the firmware has build-time credentials to fall back to.
+/// Written in place of a record by "change everything": forces setup on the
+/// next boot even when the firmware has build-time credentials to fall back to.
 const SETUP_REQUESTED: &[u8; 4] = b"CSET";
 
 pub enum Stored {
     Credentials(Credentials),
-    SetupRequested,
+    /// Go to setup. With `previous`, the form starts from those settings and
+    /// the token is kept unless a new one is entered ("change WiFi").
+    SetupRequested { previous: Option<Credentials> },
     Nothing,
 }
 
@@ -46,22 +48,27 @@ impl Store {
             return Stored::Nothing;
         }
         if buffer.starts_with(SETUP_REQUESTED) {
-            return Stored::SetupRequested;
+            return Stored::SetupRequested { previous: None };
         }
         match Credentials::from_record(&buffer) {
-            Some(credentials) => Stored::Credentials(credentials),
+            Some((credentials, false)) => Stored::Credentials(credentials),
+            Some((credentials, true)) => Stored::SetupRequested { previous: Some(credentials) },
             None => Stored::Nothing,
         }
     }
 
     pub fn save(&mut self, credentials: &Credentials) -> Result<(), ()> {
-        self.replace(&credentials.to_record())?;
+        self.replace(&credentials.to_record(false))?;
         info!("Settings saved for network '{}'", credentials.ssid);
         Ok(())
     }
 
-    pub fn request_setup(&mut self) -> Result<(), ()> {
-        self.replace(SETUP_REQUESTED)
+    /// Make the next boot go to setup: starting from `keep`, or from nothing.
+    pub fn request_setup(&mut self, keep: Option<&Credentials>) -> Result<(), ()> {
+        match keep {
+            Some(credentials) => self.replace(&credentials.to_record(true)),
+            None => self.replace(SETUP_REQUESTED),
+        }
     }
 
     fn replace(&mut self, contents: &[u8]) -> Result<(), ()> {

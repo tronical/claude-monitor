@@ -85,9 +85,13 @@ fn main() -> ! {
         password: env!("WIFI_PASSWORD").into(),
         token: env!("CLAUDE_OAUTH_TOKEN").into(),
     };
+    let mut previous = None;
     let credentials = match store.load() {
         Stored::Credentials(stored) => Some(stored),
-        Stored::SetupRequested => None,
+        Stored::SetupRequested { previous: kept } => {
+            previous = kept;
+            None
+        }
         Stored::Nothing => built_in.validate().is_ok().then_some(built_in),
     };
     let access_point: Option<&'static AccessPoint> = match credentials {
@@ -101,7 +105,7 @@ fn main() -> ! {
         }
         (None, Some(access_point)) => {
             info!("No settings: starting setup as '{}'", access_point.ssid);
-            Mode::Setup(access_point)
+            Mode::Setup { access_point, previous }
         }
         (None, None) => unreachable!(),
     };
@@ -129,7 +133,13 @@ fn main() -> ! {
 
     let window = MainWindow::new().expect("creating the window");
     window.on_refresh(|| state::REFRESH.signal(()));
-    window.on_reconfigure(|| state::RECONFIGURE.signal(()));
+    window.on_reconfigure(|keep_token| {
+        state::RECONFIGURE.signal(if keep_token {
+            state::Reconfigure::WifiOnly
+        } else {
+            state::Reconfigure::Everything
+        })
+    });
     let setup_screen = access_point.map(SetupScreen::new);
 
     // The network core cannot call into Slint, so the UI pulls instead. Twice

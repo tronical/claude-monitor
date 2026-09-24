@@ -24,7 +24,7 @@ use static_cell::StaticCell;
 
 use crate::config::Credentials;
 use crate::setup::{self, AccessPoint};
-use crate::state::{self, Held, Link, Problem};
+use crate::state::{self, Held, Link, Problem, Reconfigure};
 use crate::storage::Store;
 use crate::usage::{self, Outcome};
 
@@ -33,7 +33,11 @@ pub enum Mode {
     /// The token in here is only ever written into the TLS session: never
     /// logged, never shown on the display.
     Run(&'static Credentials),
-    Setup(&'static AccessPoint),
+    Setup {
+        access_point: &'static AccessPoint,
+        /// Settings to start the form from, when only the WiFi is changing.
+        previous: Option<Credentials>,
+    },
 }
 
 const POLL_INTERVAL: Duration = Duration::from_secs(60);
@@ -71,11 +75,11 @@ pub async fn run(
 ) {
     let credentials = match mode {
         Mode::Run(credentials) => credentials,
-        Mode::Setup(access_point) => {
-            setup::run(spawner, wifi, trng, access_point, store).await
+        Mode::Setup { access_point, previous } => {
+            setup::run(spawner, wifi, trng, access_point, previous, store).await
         }
     };
-    spawner.spawn(reconfigure_task(store).unwrap());
+    spawner.spawn(reconfigure_task(store, credentials).unwrap());
 
     // The controller is created here rather than on the first core because
     // esp-radio pins its WiFi task to whichever core calls this.
@@ -113,13 +117,17 @@ pub async fn run(
 
 /// "Reconfigure" from the UI: leave a marker in flash and restart into setup.
 #[embassy_executor::task]
-async fn reconfigure_task(mut store: Store) {
-    state::RECONFIGURE.wait().await;
-    info!("Reconfiguration requested");
+async fn reconfigure_task(mut store: Store, credentials: &'static Credentials) {
+    let scope = state::RECONFIGURE.wait().await;
+    info!("Reconfiguration requested: {scope:?}");
     if !state::halt_ui_core() {
         warn!("UI core did not stop; writing anyway");
     }
-    let _ = store.request_setup();
+    let keep = match scope {
+        Reconfigure::WifiOnly => Some(credentials),
+        Reconfigure::Everything => None,
+    };
+    let _ = store.request_setup(keep);
     // The UI core is gone either way, so restarting is the only way forward.
     esp_hal::system::software_reset();
 }

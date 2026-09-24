@@ -21,9 +21,13 @@ const MAX_PASSWORD: usize = 63;
 const MAX_TOKEN: usize = 512;
 
 const MAGIC: &[u8; 4] = b"CMON";
-const FORMAT_VERSION: u8 = 1;
-/// Magic, version, three length-prefixed fields, CRC.
-pub const MAX_RECORD_LEN: usize = 4 + 1 + 3 * 2 + MAX_SSID + MAX_PASSWORD + MAX_TOKEN + 4;
+/// Version 1 had no flags byte; it is still read.
+const FORMAT_VERSION: u8 = 2;
+/// Set on a record left behind by "change WiFi": the next boot goes to setup
+/// with these settings on offer, the token kept unless replaced.
+const FLAG_SETUP_REQUESTED: u8 = 1;
+/// Magic, version, flags, three length-prefixed fields, CRC.
+pub const MAX_RECORD_LEN: usize = 4 + 1 + 1 + 3 * 2 + MAX_SSID + MAX_PASSWORD + MAX_TOKEN + 4;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Credentials {
@@ -93,8 +97,9 @@ impl Credentials {
     }
 
     /// Decode an `application/x-www-form-urlencoded` body with the fields
-    /// `ssid`, `password` and `token`.
-    pub fn from_form(body: &str) -> Result<Self, Invalid> {
+    /// `ssid`, `password` and `token`. An empty token means "keep this one"
+    /// when there is one to keep.
+    pub fn from_form(body: &str, kept_token: Option<&str>) -> Result<Self, Invalid> {
         let mut credentials =
             Self { ssid: String::new(), password: String::new(), token: String::new() };
         for pair in body.split('&') {
@@ -109,14 +114,20 @@ impl Credentials {
                 _ => {}
             }
         }
+        if credentials.token.is_empty()
+            && let Some(kept) = kept_token
+        {
+            credentials.token = kept.into();
+        }
         credentials.validate()?;
         Ok(credentials)
     }
 
-    pub fn to_record(&self) -> Vec<u8> {
+    pub fn to_record(&self, setup_requested: bool) -> Vec<u8> {
         let mut record = Vec::with_capacity(MAX_RECORD_LEN);
         record.extend_from_slice(MAGIC);
         record.push(FORMAT_VERSION);
+        record.push(if setup_requested { FLAG_SETUP_REQUESTED } else { 0 });
         for field in [&self.ssid, &self.password, &self.token] {
             record.extend_from_slice(&(field.len() as u16).to_le_bytes());
             record.extend_from_slice(field.as_bytes());
@@ -127,13 +138,19 @@ impl Credentials {
     }
 
     /// Decode a record from the start of `flash`, which may be followed by
-    /// anything. Erased flash, a torn write and a future format all read as
-    /// `None`, which sends the device back to setup.
-    pub fn from_record(flash: &[u8]) -> Option<Self> {
+    /// anything, along with whether it asks for setup. Erased flash, a torn
+    /// write and a future format all read as `None`, which sends the device
+    /// back to setup.
+    pub fn from_record(flash: &[u8]) -> Option<(Self, bool)> {
         let mut cursor = flash;
-        if take(&mut cursor, MAGIC.len())? != MAGIC || take(&mut cursor, 1)? != [FORMAT_VERSION] {
+        if take(&mut cursor, MAGIC.len())? != MAGIC {
             return None;
         }
+        let flags = match take(&mut cursor, 1)? {
+            [1] => 0,
+            [FORMAT_VERSION] => take(&mut cursor, 1)?[0],
+            _ => return None,
+        };
         let mut field = || {
             let len = u16::from_le_bytes(take(&mut cursor, 2)?.try_into().ok()?);
             String::from_utf8(take(&mut cursor, len.into())?.to_vec()).ok()
@@ -143,7 +160,7 @@ impl Credentials {
         let covered = flash.len() - cursor.len();
         let stored_crc = u32::from_le_bytes(take(&mut cursor, 4)?.try_into().ok()?);
         (crc32(&flash[..covered]) == stored_crc && credentials.validate().is_ok())
-            .then_some(credentials)
+            .then_some((credentials, flags & FLAG_SETUP_REQUESTED != 0))
     }
 }
 
@@ -234,10 +251,26 @@ mod tests {
 
     #[test]
     fn record_round_trips_and_ignores_trailing_flash() {
-        let mut flash = sample().to_record();
+        let mut flash = sample().to_record(false);
         assert!(flash.len() <= MAX_RECORD_LEN);
         flash.extend_from_slice(&[0xFF; 64]);
-        assert_eq!(Credentials::from_record(&flash), Some(sample()));
+        assert_eq!(Credentials::from_record(&flash), Some((sample(), false)));
+        assert_eq!(Credentials::from_record(&sample().to_record(true)), Some((sample(), true)));
+    }
+
+    #[test]
+    fn version_1_records_still_read() {
+        // What firmware before the flags byte wrote.
+        let mut v1 = Vec::new();
+        v1.extend_from_slice(MAGIC);
+        v1.push(1);
+        for field in [&sample().ssid, &sample().password, &sample().token] {
+            v1.extend_from_slice(&(field.len() as u16).to_le_bytes());
+            v1.extend_from_slice(field.as_bytes());
+        }
+        let crc = crc32(&v1);
+        v1.extend_from_slice(&crc.to_le_bytes());
+        assert_eq!(Credentials::from_record(&v1), Some((sample(), false)));
     }
 
     #[test]
@@ -245,7 +278,7 @@ mod tests {
         assert_eq!(Credentials::from_record(&[0xFF; 256]), None);
         assert_eq!(Credentials::from_record(&[]), None);
 
-        let record = sample().to_record();
+        let record = sample().to_record(false);
         assert_eq!(Credentials::from_record(&record[..record.len() - 1]), None);
 
         let mut flipped = record.clone();
@@ -260,7 +293,17 @@ mod tests {
     #[test]
     fn decodes_a_browser_form_submission() {
         let body = "ssid=Caf%C3%A9+Net&password=p%26ss+word%2B1&token=++sk-ant-oat01-abcDEF_123-xyz%0D%0A";
-        assert_eq!(Credentials::from_form(body), Ok(sample()));
+        assert_eq!(Credentials::from_form(body, None), Ok(sample()));
+    }
+
+    #[test]
+    fn an_empty_token_keeps_the_old_one_only_when_there_is_one() {
+        let body = "ssid=Caf%C3%A9+Net&password=p%26ss+word%2B1&token=";
+        assert_eq!(Credentials::from_form(body, Some(TOKEN)), Ok(sample()));
+        assert_eq!(Credentials::from_form(body, None), Err(Invalid::MissingToken));
+        // A new token still wins over a kept one.
+        let body = "ssid=Caf%C3%A9+Net&password=p%26ss+word%2B1&token=sk-ant-new";
+        assert_eq!(Credentials::from_form(body, Some(TOKEN)).map(|c| c.token), Ok("sk-ant-new".into()));
     }
 
     #[test]

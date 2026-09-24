@@ -96,9 +96,17 @@ static SNAPSHOT: Mutex<CriticalSectionRawMutex, Cell<Snapshot>> = Mutex::new(Cel
 /// Raised by the UI (a tap) to poll now instead of at the next interval.
 pub static REFRESH: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-/// Raised by the UI to forget the stored settings and restart into setup.
-/// Flash is only ever written from the network core, so this goes through it.
-pub static RECONFIGURE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+/// What "set up again" should start from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reconfigure {
+    /// The token is kept; the form only needs a network.
+    WifiOnly,
+    Everything,
+}
+
+/// Raised by the UI to restart into setup. Flash is only ever written from
+/// the network core, so this goes through it.
+pub static RECONFIGURE: Signal<CriticalSectionRawMutex, Reconfigure> = Signal::new();
 
 static UI_HALT_REQUESTED: AtomicBool = AtomicBool::new(false);
 static UI_HALTED: AtomicBool = AtomicBool::new(false);

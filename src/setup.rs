@@ -68,9 +68,13 @@ pub async fn run(
     wifi: WIFI<'static>,
     trng: &'static mut Trng,
     access_point: &'static AccessPoint,
+    previous: Option<Credentials>,
     store: Store,
 ) -> ! {
     state::update(|s| s.link = Link::Setup(SetupStage::Starting));
+    if let Some(previous) = &previous {
+        info!("Setup starts from the settings for network '{}'", previous.ssid);
+    }
 
     let (mut controller, interfaces) =
         esp_radio::wifi::new(wifi, Default::default()).expect("WiFi init");
@@ -111,6 +115,7 @@ pub async fn run(
     let portal = Portal {
         stack,
         networks,
+        previous,
         store: Mutex::new(store),
         pending: Mutex::new(None),
         controller: Mutex::new(Some(controller)),
@@ -244,6 +249,9 @@ fn dns_response(query: &[u8], response: &mut [u8]) -> Option<usize> {
 struct Portal {
     stack: Stack<'static>,
     networks: Vec<String>,
+    /// The settings in use before "change WiFi": the form starts from them,
+    /// and their token stays unless a new one is entered.
+    previous: Option<Credentials>,
     store: Mutex<NoopRawMutex, Store>,
     /// Accepted settings, written once their confirmation page has been sent.
     pending: Mutex<NoopRawMutex, Option<Credentials>>,
@@ -317,7 +325,7 @@ impl Portal {
                 send(socket, "302 Found", &format!("Location: {PORTAL_URL}\r\n"), "").await;
                 false
             }
-            ("POST", "/save") => match Credentials::from_form(request.body) {
+            ("POST", "/save") => match Credentials::from_form(request.body, self.kept_token()) {
                 Ok(credentials) => {
                     info!("Setup form accepted for network '{}'", credentials.ssid);
                     state::update(|s| s.link = Link::Setup(SetupStage::Saving));
@@ -343,7 +351,8 @@ impl Portal {
                         s.link = Link::Setup(SetupStage::FormOpened);
                     }
                 });
-                send(socket, "200 OK", "", &page(&self.form(None, ""))).await;
+                let ssid = self.previous.as_ref().map_or("", |p| p.ssid.as_str());
+                send(socket, "200 OK", "", &page(&self.form(None, ssid))).await;
                 false
             }
             _ => {
@@ -353,10 +362,32 @@ impl Portal {
         }
     }
 
+    fn kept_token(&self) -> Option<&str> {
+        self.previous.as_ref().map(|p| p.token.as_str())
+    }
+
     fn form(&self, error: Option<&str>, ssid: &str) -> String {
         let error = error
             .map(|message| format!(r#"<p class="error">{}</p>"#, html_escape(message)))
             .unwrap_or_default();
+        let (intro, token_required, token_placeholder, token_hint) = if self.kept_token().is_some() {
+            (
+                "Connect the display to a WiFi network. It keeps the Claude token it has, \
+                 unless you give it a new one.",
+                "",
+                "Leave empty to keep the current token",
+                "Only needed to switch accounts: run <code>claude setup-token</code> on a \
+                 computer where Claude Code is logged in, and paste what it prints.",
+            )
+        } else {
+            (
+                "Connect the display to your WiFi and give it a token to read your usage with.",
+                " required",
+                "sk-ant-oat01-...",
+                "Run <code>claude setup-token</code> on a computer where Claude Code is \
+                 logged in, and paste what it prints.",
+            )
+        };
         let options: String = self
             .networks
             .iter()
@@ -364,7 +395,7 @@ impl Portal {
             .collect();
         format!(
             r#"<h1>Claude Monitor</h1>
-<p>Connect the display to your WiFi and give it a token to read your usage with.</p>
+<p>{intro}</p>
 {error}
 <form method="post" action="/save" autocomplete="off">
 <label for="ssid">WiFi network</label>
@@ -375,10 +406,9 @@ impl Portal {
 <label for="password">WiFi password</label>
 <input id="password" name="password" type="password" maxlength="63">
 <label for="token">Claude token</label>
-<textarea id="token" name="token" rows="4" required
- autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="sk-ant-oat01-..."></textarea>
-<p class="hint">Run <code>claude setup-token</code> on a computer where Claude Code is
-logged in, and paste what it prints.</p>
+<textarea id="token" name="token" rows="4"{token_required}
+ autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="{token_placeholder}"></textarea>
+<p class="hint">{token_hint}</p>
 <button type="submit">Save and restart</button>
 </form>"#,
             ssid = html_escape(ssid),
