@@ -62,3 +62,12 @@ codegen-units = 1
 debug = 2
 lto = "fat"
 opt-level = "s"
+
+# The BOX-3 board support skipped drawing while a still finger was held, so
+# anything a timer changed under a long press (the reconfigure dialog) only
+# showed up on release. Fixed on this branch; drop the patch once it is in a
+# Slint release. Until then the tree needs the clone at this path.
+[patch."https://github.com/slint-ui/slint"]
+slint = { git = "file:///Users/simon/src/slint", branch = "simon/box3-redraw-while-held" }
+slint-build = { git = "file:///Users/simon/src/slint", branch = "simon/box3-redraw-while-held" }
+mcu-board-support = { git = "file:///Users/simon/src/slint", branch = "simon/box3-redraw-while-held" }
