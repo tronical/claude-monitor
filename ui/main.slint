@@ -220,6 +220,13 @@ export component MainWindow inherits Window {
     // A long press ends in a release like any other; this keeps that release
     // from also counting as a tap.
     property <bool> long-pressed;
+    // The finger is down (allowing for momentary drops).
+    property <bool> held;
+    // The finger just lifted; it may come straight back.
+    property <bool> release-pending;
+    // The dialog opens under the finger that held to open it, so its buttons
+    // stay inert until the glass has been quiet for a moment.
+    property <bool> dialog-armed;
 
     width: 320px;
     height: 240px;
@@ -296,16 +303,39 @@ export component MainWindow inherits Window {
 
     // Tap anywhere to poll right away instead of waiting for the next minute;
     // hold for three seconds to reconfigure.
+    //
+    // A touch panel can drop a held finger for a moment, so a release only
+    // counts once the finger has stayed off the glass for a little while. Taps
+    // and holds are then worked out from settled releases rather than from
+    // TouchArea's own `clicked`.
     touch := TouchArea {
-        enabled: !root.setup-mode && !root.confirming;
+        // Not disabled while the dialog is up: the dialog sits above and takes
+        // the touches, and a TouchArea disabled mid-press keeps a stale
+        // `pressed` that would swallow the next gesture.
+        enabled: !root.setup-mode;
 
         changed pressed => {
             if self.pressed {
-                root.long-pressed = false;
+                if root.release-pending {
+                    // Back within the grace period: the same press continues.
+                    root.release-pending = false;
+                } else {
+                    root.held = true;
+                    root.long-pressed = false;
+                }
+            } else {
+                root.release-pending = true;
             }
         }
+    }
 
-        clicked => {
+    Timer {
+        interval: 150ms;
+        running: root.release-pending;
+
+        triggered => {
+            root.release-pending = false;
+            root.held = false;
             if !root.long-pressed {
                 root.refresh();
             }
@@ -314,11 +344,24 @@ export component MainWindow inherits Window {
 
     Timer {
         interval: 3s;
-        running: touch.pressed;
+        running: root.held;
 
         triggered => {
+            root.held = false;
             root.long-pressed = true;
+            root.dialog-armed = false;
             root.confirming = true;
+            arm-dialog.start();
+        }
+    }
+
+    arm-dialog := Timer {
+        interval: 700ms;
+        running: false;
+
+        triggered => {
+            self.stop();
+            root.dialog-armed = true;
         }
     }
 
@@ -382,6 +425,14 @@ export component MainWindow inherits Window {
                         root.confirming = false;
                     }
                 }
+            }
+        }
+
+        // Above the buttons until armed: every touch here is the opening
+        // finger still on the glass, or lifting, and pushes arming back.
+        if !root.dialog-armed: TouchArea {
+            pointer-event(event) => {
+                arm-dialog.restart();
             }
         }
     }
