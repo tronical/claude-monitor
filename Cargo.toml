@@ -12,14 +12,16 @@ test = false
 
 [dependencies]
 # Slint and its board support come from the same upstream commit: the board
-# support crate is not published and pins `slint` to an exact version.
-slint = { git = "https://github.com/slint-ui/slint", rev = "7493eb5d145305802bec2172c6e513b720f003f8", default-features = false, features = [
+# support crate is not published and pins `slint` to an exact version. The rev
+# is the BOX-3 board-support fix (keep drawing while a still finger is held,
+# branch simon/box3-redraw-while-held); move to a master commit once merged.
+slint = { git = "https://github.com/slint-ui/slint", rev = "bbc90f3afa16fa87bd84a67b8df358997ff8e93e", default-features = false, features = [
   "compat-1-2",
   "libm",
   "renderer-software",
   "unsafe-single-threaded",
 ] }
-mcu-board-support = { git = "https://github.com/slint-ui/slint", rev = "7493eb5d145305802bec2172c6e513b720f003f8", features = ["esp32-s3-box-3"] }
+mcu-board-support = { git = "https://github.com/slint-ui/slint", rev = "bbc90f3afa16fa87bd84a67b8df358997ff8e93e", features = ["esp32-s3-box-3"] }
 
 # The esp stack is held on the esp-hal 1.1 line, which is what the Slint board
 # support pins. esp-radio 0.18 / esp-rtos 0.3 are the matching releases.
@@ -51,7 +53,7 @@ leasehund = "0.6.0"
 qrcodegen-no-heap = "1.8.1"
 
 [build-dependencies]
-slint-build = { git = "https://github.com/slint-ui/slint", rev = "7493eb5d145305802bec2172c6e513b720f003f8" }
+slint-build = { git = "https://github.com/slint-ui/slint", rev = "bbc90f3afa16fa87bd84a67b8df358997ff8e93e" }
 
 [profile.dev]
 # The default debug profile is too slow and too big for the device.
@@ -62,12 +64,3 @@ codegen-units = 1
 debug = 2
 lto = "fat"
 opt-level = "s"
-
-# The BOX-3 board support skipped drawing while a still finger was held, so
-# anything a timer changed under a long press (the reconfigure dialog) only
-# showed up on release. Fixed on this branch; drop the patch once it is in a
-# Slint release. Until then the tree needs the clone at this path.
-[patch."https://github.com/slint-ui/slint"]
-slint = { git = "file:///Users/simon/src/slint", branch = "simon/box3-redraw-while-held" }
-slint-build = { git = "file:///Users/simon/src/slint", branch = "simon/box3-redraw-while-held" }
-mcu-board-support = { git = "file:///Users/simon/src/slint", branch = "simon/box3-redraw-while-held" }
