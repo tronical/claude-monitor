@@ -336,7 +336,11 @@ export component MainWindow inherits Window {
         triggered => {
             root.release-pending = false;
             root.held = false;
-            if !root.long-pressed {
+            if root.long-pressed {
+                // The finger that opened the dialog is off the glass: the
+                // dialog may take taps now.
+                root.dialog-armed = true;
+            } else {
                 root.refresh();
             }
         }
@@ -351,17 +355,6 @@ export component MainWindow inherits Window {
             root.long-pressed = true;
             root.dialog-armed = false;
             root.confirming = true;
-            arm-dialog.start();
-        }
-    }
-
-    arm-dialog := Timer {
-        interval: 700ms;
-        running: false;
-
-        triggered => {
-            self.stop();
-            root.dialog-armed = true;
         }
     }
 
@@ -428,12 +421,8 @@ export component MainWindow inherits Window {
             }
         }
 
-        // Above the buttons until armed: every touch here is the opening
-        // finger still on the glass, or lifting, and pushes arming back.
-        if !root.dialog-armed: TouchArea {
-            pointer-event(event) => {
-                arm-dialog.restart();
-            }
-        }
+        // Above the buttons until the finger that opened the dialog has
+        // lifted, so that lift cannot press one.
+        if !root.dialog-armed: TouchArea { }
     }
 }
