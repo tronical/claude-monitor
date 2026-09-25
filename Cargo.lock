@@ -798,7 +798,7 @@ checksum = "0b396d1f76d455557e1218ec8066ae14bba60b4b36ecd55577ba979f5db7ecaa"
 [[package]]
 name = "const-field-offset"
 version = "0.2.1"
-source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#39c16dcda9f66b27a5b0f8d88cff2115ab73475b"
+source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#bbc90f3afa16fa87bd84a67b8df358997ff8e93e"
 dependencies = [
  "const-field-offset-macro",
  "field-offset",
@@ -807,7 +807,7 @@ dependencies = [
 [[package]]
 name = "const-field-offset-macro"
 version = "0.2.1"
-source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#39c16dcda9f66b27a5b0f8d88cff2115ab73475b"
+source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#bbc90f3afa16fa87bd84a67b8df358997ff8e93e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2821,7 +2821,7 @@ checksum = "48ce8546b993eaf241d69ded33b1be6d205dd9857ec879d9d18bd05d3676e144"
 [[package]]
 name = "i-slint-backend-linuxkms"
 version = "1.18.1"
-source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#39c16dcda9f66b27a5b0f8d88cff2115ab73475b"
+source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#bbc90f3afa16fa87bd84a67b8df358997ff8e93e"
 dependencies = [
  "bytemuck",
  "calloop 0.14.4",
@@ -2840,7 +2840,7 @@ dependencies = [
 [[package]]
 name = "i-slint-backend-selector"
 version = "1.18.1"
-source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#39c16dcda9f66b27a5b0f8d88cff2115ab73475b"
+source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#bbc90f3afa16fa87bd84a67b8df358997ff8e93e"
 dependencies = [
  "cfg-if",
  "cfg_aliases",
@@ -2855,7 +2855,7 @@ dependencies = [
 [[package]]
 name = "i-slint-backend-testing"
 version = "1.18.1"
-source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#39c16dcda9f66b27a5b0f8d88cff2115ab73475b"
+source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#bbc90f3afa16fa87bd84a67b8df358997ff8e93e"
 dependencies = [
  "cfg_aliases",
  "i-slint-common",
@@ -2867,7 +2867,7 @@ dependencies = [
 [[package]]
 name = "i-slint-backend-winit"
 version = "1.18.1"
-source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#39c16dcda9f66b27a5b0f8d88cff2115ab73475b"
+source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#bbc90f3afa16fa87bd84a67b8df358997ff8e93e"
 dependencies = [
  "arboard",
  "block2 0.6.2",
@@ -2907,7 +2907,7 @@ dependencies = [
 [[package]]
 name = "i-slint-common"
 version = "1.18.1"
-source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#39c16dcda9f66b27a5b0f8d88cff2115ab73475b"
+source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#bbc90f3afa16fa87bd84a67b8df358997ff8e93e"
 dependencies = [
  "derive_more",
  "fontique",
@@ -2923,7 +2923,7 @@ dependencies = [
 [[package]]
 name = "i-slint-compiler"
 version = "1.18.1"
-source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#39c16dcda9f66b27a5b0f8d88cff2115ab73475b"
+source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#bbc90f3afa16fa87bd84a67b8df358997ff8e93e"
 dependencies = [
  "annotate-snippets",
  "by_address",
@@ -2956,7 +2956,7 @@ dependencies = [
 [[package]]
 name = "i-slint-core"
 version = "1.18.1"
-source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#39c16dcda9f66b27a5b0f8d88cff2115ab73475b"
+source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#bbc90f3afa16fa87bd84a67b8df358997ff8e93e"
 dependencies = [
  "bitflags 2.13.2",
  "cfg-if",
@@ -3007,7 +3007,7 @@ dependencies = [
 [[package]]
 name = "i-slint-core-macros"
 version = "1.18.1"
-source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#39c16dcda9f66b27a5b0f8d88cff2115ab73475b"
+source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#bbc90f3afa16fa87bd84a67b8df358997ff8e93e"
 dependencies = [
  "quote",
  "serde_json",
@@ -3017,7 +3017,7 @@ dependencies = [
 [[package]]
 name = "i-slint-renderer-skia"
 version = "1.18.1"
-source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#39c16dcda9f66b27a5b0f8d88cff2115ab73475b"
+source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#bbc90f3afa16fa87bd84a67b8df358997ff8e93e"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -3055,7 +3055,7 @@ dependencies = [
 [[package]]
 name = "i-slint-renderer-software"
 version = "1.18.1"
-source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#39c16dcda9f66b27a5b0f8d88cff2115ab73475b"
+source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#bbc90f3afa16fa87bd84a67b8df358997ff8e93e"
 dependencies = [
  "bytemuck",
  "clru",
@@ -3840,7 +3840,7 @@ dependencies = [
 [[package]]
 name = "mcu-board-support"
 version = "1.18.1"
-source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#39c16dcda9f66b27a5b0f8d88cff2115ab73475b"
+source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#bbc90f3afa16fa87bd84a67b8df358997ff8e93e"
 dependencies = [
  "cfg-if",
  "derive_more",
@@ -5418,7 +5418,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 [[package]]
 name = "slint"
 version = "1.18.1"
-source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#39c16dcda9f66b27a5b0f8d88cff2115ab73475b"
+source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#bbc90f3afa16fa87bd84a67b8df358997ff8e93e"
 dependencies = [
  "const-field-offset",
  "i-slint-backend-linuxkms",
@@ -5438,7 +5438,7 @@ dependencies = [
 [[package]]
 name = "slint-build"
 version = "1.18.1"
-source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#39c16dcda9f66b27a5b0f8d88cff2115ab73475b"
+source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#bbc90f3afa16fa87bd84a67b8df358997ff8e93e"
 dependencies = [
  "derive_more",
  "fontique",
@@ -5450,7 +5450,7 @@ dependencies = [
 [[package]]
 name = "slint-macros"
 version = "1.18.1"
-source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#39c16dcda9f66b27a5b0f8d88cff2115ab73475b"
+source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#bbc90f3afa16fa87bd84a67b8df358997ff8e93e"
 dependencies = [
  "i-slint-compiler",
  "proc-macro2",
@@ -5520,7 +5520,7 @@ version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -6268,7 +6268,7 @@ checksum = "6a02e4885ed3bc0f2de90ea6dd45ebcbb66dacffe03547fadbb0eeae2770887d"
 [[package]]
 name = "vtable"
 version = "0.5.0"
-source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#39c16dcda9f66b27a5b0f8d88cff2115ab73475b"
+source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#bbc90f3afa16fa87bd84a67b8df358997ff8e93e"
 dependencies = [
  "const-field-offset",
  "portable-atomic",
@@ -6279,7 +6279,7 @@ dependencies = [
 [[package]]
 name = "vtable-macro"
 version = "0.5.0"
-source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#39c16dcda9f66b27a5b0f8d88cff2115ab73475b"
+source = "git+file:///Users/simon/src/slint?branch=simon%2Fbox3-redraw-while-held#bbc90f3afa16fa87bd84a67b8df358997ff8e93e"
 dependencies = [
  "proc-macro2",
  "quote",
