@@ -31,7 +31,7 @@ use leasehund::{DhcpServer, TransactionEvent};
 use log::{debug, info, warn};
 use static_cell::StaticCell;
 
-use crate::config::{Credentials, html_escape, url_decode};
+use crate::config::{Settings, html_escape, url_decode};
 use crate::net::net_task;
 use crate::state::{self, Link, SetupStage};
 use crate::storage::Store;
@@ -68,12 +68,12 @@ pub async fn run(
     wifi: WIFI<'static>,
     trng: &'static mut Trng,
     access_point: &'static AccessPoint,
-    previous: Option<Credentials>,
+    previous: Option<Settings>,
     store: Store,
 ) -> ! {
     state::update(|s| s.link = Link::Setup(SetupStage::Starting));
     if let Some(previous) = &previous {
-        info!("Setup starts from the settings for network '{}'", previous.ssid);
+        info!("Setup starts from {} stored network(s)", previous.networks.len());
     }
 
     let (mut controller, interfaces) =
@@ -249,12 +249,12 @@ fn dns_response(query: &[u8], response: &mut [u8]) -> Option<usize> {
 struct Portal {
     stack: Stack<'static>,
     networks: Vec<String>,
-    /// The settings in use before "change WiFi": the form starts from them,
-    /// and their token stays unless a new one is entered.
-    previous: Option<Credentials>,
+    /// The settings in use before "add a network": the form starts from
+    /// them, and their token stays unless a new one is entered.
+    previous: Option<Settings>,
     store: Mutex<NoopRawMutex, Store>,
     /// Accepted settings, written once their confirmation page has been sent.
-    pending: Mutex<NoopRawMutex, Option<Credentials>>,
+    pending: Mutex<NoopRawMutex, Option<Settings>>,
     /// Owning this keeps WiFi up; dropping it takes the access point down.
     controller: Mutex<NoopRawMutex, Option<WifiController<'static>>>,
 }
@@ -290,7 +290,7 @@ impl Portal {
             let _ = with_timeout(Duration::from_secs(2), socket.flush()).await;
             socket.abort();
 
-            if restart && let Some(credentials) = self.pending.lock().await.take() {
+            if restart && let Some(settings) = self.pending.lock().await.take() {
                 // Time for the page to reach the phone and the screen to update.
                 Timer::after(Duration::from_millis(1500)).await;
                 // Take the access point down properly instead of just
@@ -305,7 +305,7 @@ impl Portal {
                 }
                 // `try_lock`, not `lock().await`: nothing else holds it, and
                 // nothing may wait any more.
-                let saved = self.store.try_lock().map(|mut store| store.save(&credentials));
+                let saved = self.store.try_lock().map(|mut store| store.save(&settings));
                 if !matches!(saved, Ok(Ok(()))) {
                     // Nothing was stored, so the restart lands in setup again.
                     warn!("Settings were not saved");
@@ -325,14 +325,14 @@ impl Portal {
                 send(socket, "302 Found", &format!("Location: {PORTAL_URL}\r\n"), "").await;
                 false
             }
-            ("POST", "/save") => match Credentials::from_form(request.body, self.kept_token()) {
-                Ok(credentials) => {
-                    info!("Setup form accepted for network '{}'", credentials.ssid);
+            ("POST", "/save") => match Settings::from_form(request.body, self.previous.as_ref()) {
+                Ok(settings) => {
+                    info!("Setup form accepted with {} network(s)", settings.networks.len());
                     state::update(|s| s.link = Link::Setup(SetupStage::Saving));
                     // Answer first. Once the UI core is stopped for the write
                     // there are no timers, and with them no reliable network.
-                    send(socket, "200 OK", "", &page(&saved_page(&credentials.ssid))).await;
-                    *self.pending.lock().await = Some(credentials);
+                    send(socket, "200 OK", "", &page(&saved_page(&settings))).await;
+                    *self.pending.lock().await = Some(settings);
                     true
                 }
                 Err(invalid) => {
@@ -351,7 +351,8 @@ impl Portal {
                         s.link = Link::Setup(SetupStage::FormOpened);
                     }
                 });
-                let ssid = self.previous.as_ref().map_or("", |p| p.ssid.as_str());
+                // The strongest network in range is usually the one to add.
+                let ssid = self.networks.first().map_or("", String::as_str);
                 send(socket, "200 OK", "", &page(&self.form(None, ssid))).await;
                 false
             }
@@ -362,18 +363,34 @@ impl Portal {
         }
     }
 
-    fn kept_token(&self) -> Option<&str> {
-        self.previous.as_ref().map(|p| p.token.as_str())
-    }
-
     fn form(&self, error: Option<&str>, ssid: &str) -> String {
         let error = error
             .map(|message| format!(r#"<p class="error">{}</p>"#, html_escape(message)))
             .unwrap_or_default();
-        let (intro, token_required, token_placeholder, token_hint) = if self.kept_token().is_some() {
+        let known: String = match &self.previous {
+            Some(previous) => {
+                let items: String = previous
+                    .networks
+                    .iter()
+                    .map(|n| {
+                        let name = html_escape(&n.ssid);
+                        format!(
+                            r#"<li><span>{name}</span><label class="forget"><input type="checkbox" name="forget" value="{name}"> forget</label></li>"#
+                        )
+                    })
+                    .collect();
+                format!(
+                    r#"<label>Networks the display knows</label><ul class="known">{items}</ul>
+<p class="hint">It joins whichever of these is in range. Up to eight.</p>"#
+                )
+            }
+            None => String::new(),
+        };
+        let network_label = if self.previous.is_some() { "Add a WiFi network" } else { "WiFi network" };
+        let (intro, token_required, token_placeholder, token_hint) = if self.previous.is_some() {
             (
-                "Connect the display to a WiFi network. It keeps the Claude token it has, \
-                 unless you give it a new one.",
+                "Add the WiFi network here to the display. It keeps the networks and the Claude \
+                 token it has, unless you change them below.",
                 "",
                 "Leave empty to keep the current token",
                 "Only needed to switch accounts: run <code>claude setup-token</code> on a \
@@ -398,8 +415,9 @@ impl Portal {
 <p>{intro}</p>
 {error}
 <form method="post" action="/save" autocomplete="off">
-<label for="ssid">WiFi network</label>
-<input id="ssid" name="ssid" list="networks" value="{ssid}" required maxlength="32"
+{known}
+<label for="ssid">{network_label}</label>
+<input id="ssid" name="ssid" list="networks" value="{ssid}"{ssid_required} maxlength="32"
  autocapitalize="none" autocorrect="off" spellcheck="false">
 <datalist id="networks">{options}</datalist>
 <p class="hint">2.4 GHz, WPA2. The display has no 5 GHz radio.</p>
@@ -412,17 +430,20 @@ impl Portal {
 <button type="submit">Save and restart</button>
 </form>"#,
             ssid = html_escape(ssid),
+            // With networks stored already, the form may just forget one.
+            ssid_required = if self.previous.is_some() { "" } else { " required" },
         )
     }
 }
 
-fn saved_page(ssid: &str) -> String {
+fn saved_page(settings: &Settings) -> String {
+    let names: Vec<String> = settings.networks.iter().map(|n| html_escape(&n.ssid)).collect();
     format!(
         "<h1>Got it</h1><p>The display is saving this and restarting to join <b>{}</b>. \
          This setup network is going away; your phone will return to its usual WiFi.</p>\
          <p>If it shows the setup code again, saving failed: repeat these steps. If it cannot \
          connect, hold a finger on its screen for three seconds to start over.</p>",
-        html_escape(ssid)
+        names.join("</b>, <b>")
     )
 }
 
@@ -438,6 +459,9 @@ input,textarea{{width:100%;box-sizing:border-box;font:inherit;padding:.6em;borde
 textarea{{font-family:ui-monospace,monospace;font-size:.85em;word-break:break-all}}
 button{{margin-top:1.6em;width:100%;font:inherit;font-weight:600;padding:.8em;border:0;border-radius:8px;background:#d97757;color:#141413}}
 .hint{{color:#9c9a92;font-size:.85em;margin:.4em 0 0}}
+ul.known{{list-style:none;margin:0;padding:0}}
+ul.known li{{display:flex;justify-content:space-between;align-items:center;padding:.5em .6em;border:1px solid #30302e;border-radius:8px;background:#1f1e1d;margin-bottom:.4em}}
+.forget{{display:inline;margin:0;font-weight:400;color:#9c9a92;font-size:.9em}}
 .error{{background:#e5534b22;border:1px solid #e5534b;border-radius:8px;padding:.6em .8em}}
 code{{color:#d97757}}
 </style></head><body>{content}</body></html>"#

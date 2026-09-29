@@ -18,7 +18,10 @@ use crate::usage::Reading;
 pub enum Link {
     /// First-run setup; see `setup.rs`.
     Setup(SetupStage),
+    /// Scanning, or joining a network that is in range.
     Connecting,
+    /// None of the stored networks is in range.
+    NoKnownNetwork,
     /// Associated, waiting for DHCP.
     NoAddress,
     Online,
@@ -99,7 +102,7 @@ pub static REFRESH: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// What "set up again" should start from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reconfigure {
-    /// The token is kept; the form only needs a network.
+    /// The token and the stored networks are kept; the form adds one.
     WifiOnly,
     Everything,
 }

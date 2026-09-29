@@ -32,7 +32,7 @@ use qrcodegen_no_heap::{QrCode, QrCodeEcc, Version};
 use slint::{ComponentHandle, Image, Rgb8Pixel, SharedPixelBuffer};
 use static_cell::StaticCell;
 
-use crate::config::{Credentials, wifi_qr_escape};
+use crate::config::{Network, Settings, wifi_qr_escape};
 use crate::net::Mode;
 use crate::setup::AccessPoint;
 use crate::state::{Link, Problem, SetupStage, Snapshot};
@@ -80,28 +80,30 @@ fn main() -> ! {
     // Settings saved by the setup form win over ones baked in at build time,
     // and an explicit "set up again" wins over both.
     let mut store = Store::new(peripherals.FLASH);
-    let built_in = Credentials {
-        ssid: env!("WIFI_SSID").into(),
-        password: env!("WIFI_PASSWORD").into(),
+    let built_in = Settings {
+        networks: alloc::vec![Network {
+            ssid: env!("WIFI_SSID").into(),
+            password: env!("WIFI_PASSWORD").into(),
+        }],
         token: env!("CLAUDE_OAUTH_TOKEN").into(),
     };
     let mut previous = None;
-    let credentials = match store.load() {
-        Stored::Credentials(stored) => Some(stored),
+    let settings = match store.load() {
+        Stored::Settings(stored) => Some(stored),
         Stored::SetupRequested { previous: kept } => {
             previous = kept;
             None
         }
         Stored::Nothing => built_in.validate().is_ok().then_some(built_in),
     };
-    let access_point: Option<&'static AccessPoint> = match credentials {
+    let access_point: Option<&'static AccessPoint> = match settings {
         Some(_) => None,
         None => Some(Box::leak(Box::new(AccessPoint::generate(trng)))),
     };
-    let mode = match (credentials, access_point) {
-        (Some(credentials), _) => {
-            info!("Using settings for network '{}'", credentials.ssid);
-            Mode::Run(Box::leak(Box::new(credentials)))
+    let mode = match (settings, access_point) {
+        (Some(settings), _) => {
+            info!("Using settings with {} stored network(s)", settings.networks.len());
+            Mode::Run(Box::leak(Box::new(settings)))
         }
         (None, Some(access_point)) => {
             info!("No settings: starting setup as '{}'", access_point.ssid);
@@ -283,6 +285,7 @@ fn present(window: &MainWindow, snapshot: &Snapshot) {
         match snapshot.link {
             Link::Setup(_) => "SETUP",
             Link::Connecting => "CONNECTING",
+            Link::NoKnownNetwork => "NO KNOWN WIFI",
             Link::NoAddress => "NO ADDRESS",
             Link::Online if snapshot.polling => "UPDATING",
             Link::Online => "ONLINE",
@@ -297,6 +300,7 @@ fn present(window: &MainWindow, snapshot: &Snapshot) {
             match (snapshot.link, snapshot.problem) {
                 (_, Some(problem)) => describe(problem),
                 (Link::Online, None) => "FETCHING USAGE".into(),
+                (Link::NoKnownNetwork, None) => "NO KNOWN WIFI HERE · HOLD TO ADD ONE".into(),
                 (_, None) if Instant::now().as_secs() > 45 => "NO WIFI · HOLD SCREEN TO SET UP".into(),
                 (_, None) => "WAITING FOR WIFI".into(),
             }

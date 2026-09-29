@@ -385,7 +385,7 @@ export component MainWindow inherits Window {
             }
 
             Text {
-                text: "The display restarts into setup and you finish on your phone.";
+                text: "The display restarts into setup; you finish on your phone.";
                 color: Palette.muted;
                 font-size: 13px;
                 wrap: word-wrap;
@@ -396,7 +396,7 @@ export component MainWindow inherits Window {
                 spacing: 8px;
 
                 DialogButton {
-                    text: "CHANGE WIFI · KEEP TOKEN";
+                    text: "ADD A WIFI NETWORK";
                     clicked => {
                         root.confirming = false;
                         root.reconfigure(true);
@@ -404,7 +404,7 @@ export component MainWindow inherits Window {
                 }
 
                 DialogButton {
-                    text: "CHANGE WIFI AND TOKEN";
+                    text: "START OVER";
                     primary: true;
                     clicked => {
                         root.confirming = false;

@@ -15,6 +15,7 @@ use esp_hal::peripherals::WIFI;
 use esp_hal::rng::Trng;
 use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{Config as WifiConfig, Interface, WifiController};
+use alloc::vec::Vec;
 use log::{debug, error, info, warn};
 use mbedtls_rs::{
     Certificate, ClientSessionConfig, Session, SessionConfig, SessionError, Tls, TlsReference,
@@ -22,7 +23,7 @@ use mbedtls_rs::{
 };
 use static_cell::StaticCell;
 
-use crate::config::Credentials;
+use crate::config::{Network, Settings};
 use crate::setup::{self, AccessPoint};
 use crate::state::{self, Held, Link, Problem, Reconfigure};
 use crate::storage::Store;
@@ -32,11 +33,11 @@ use crate::usage::{self, Outcome};
 pub enum Mode {
     /// The token in here is only ever written into the TLS session: never
     /// logged, never shown on the display.
-    Run(&'static Credentials),
+    Run(&'static Settings),
     Setup {
         access_point: &'static AccessPoint,
-        /// Settings to start the form from, when only the WiFi is changing.
-        previous: Option<Credentials>,
+        /// Settings to start the form from, when a network is being added.
+        previous: Option<Settings>,
     },
 }
 
@@ -44,12 +45,17 @@ const POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// A failed poll is retried sooner than a good one is repeated.
 const RETRY_INTERVAL: Duration = Duration::from_secs(15);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-/// Connect attempts failing continuously for this long get the whole box
-/// reset. Seen in the field: after some disconnect the driver answers every
-/// reconnect with `NoAccessPointFound` while the network is plainly there,
-/// and nothing short of re-initialising it (which esp-radio 0.18 offers no
-/// call for) brings it back. A reset does exactly that in a second or two.
+/// A known network in range that cannot be joined for this long gets the
+/// whole box reset. Seen in the field: after some disconnect the driver
+/// answers every reconnect with `NoAccessPointFound` while the network is
+/// plainly there, and nothing short of re-initialising it (which esp-radio
+/// 0.18 offers no call for) brings it back. A reset does that in a second.
 const CONNECT_FAILURE_RESET_AFTER: Duration = Duration::from_secs(120);
+/// With no known network in range at all there is nothing to recover; the
+/// box just rescans. Still, a reset every so often costs nothing but a
+/// flicker and covers a driver that has stopped seeing networks.
+const AWAY_RESET_AFTER: Duration = Duration::from_secs(30 * 60);
+const RESCAN_INTERVAL: Duration = Duration::from_secs(20);
 /// Taps closer together than this are ignored; every poll is a real request
 /// against the subscription.
 const MIN_POLL_SPACING: Duration = Duration::from_secs(5);
@@ -73,13 +79,13 @@ pub async fn run(
     store: Store,
     mode: Mode,
 ) {
-    let credentials = match mode {
-        Mode::Run(credentials) => credentials,
+    let settings = match mode {
+        Mode::Run(settings) => settings,
         Mode::Setup { access_point, previous } => {
             setup::run(spawner, wifi, trng, access_point, previous, store).await
         }
     };
-    spawner.spawn(reconfigure_task(store, credentials).unwrap());
+    spawner.spawn(reconfigure_task(store, settings).unwrap());
 
     // The controller is created here rather than on the first core because
     // esp-radio pins its WiFi task to whichever core calls this.
@@ -109,22 +115,22 @@ pub async fn run(
         }
     };
 
-    spawner.spawn(connection_task(controller, credentials).unwrap());
+    spawner.spawn(connection_task(controller, settings).unwrap());
     spawner.spawn(net_task(runner).unwrap());
 
-    poll_loop(stack, tls.reference(), credentials).await
+    poll_loop(stack, tls.reference(), &settings.token).await
 }
 
 /// "Reconfigure" from the UI: leave a marker in flash and restart into setup.
 #[embassy_executor::task]
-async fn reconfigure_task(mut store: Store, credentials: &'static Credentials) {
+async fn reconfigure_task(mut store: Store, settings: &'static Settings) {
     let scope = state::RECONFIGURE.wait().await;
     info!("Reconfiguration requested: {scope:?}");
     if !state::halt_ui_core() {
         warn!("UI core did not stop; writing anyway");
     }
     let keep = match scope {
-        Reconfigure::WifiOnly => Some(credentials),
+        Reconfigure::WifiOnly => Some(settings),
         Reconfigure::Everything => None,
     };
     let _ = store.request_setup(keep);
@@ -137,48 +143,92 @@ pub async fn net_task(mut runner: Runner<'static, Interface<'static>>) {
     runner.run().await
 }
 
-/// Keep the station associated, reconnecting for as long as it takes.
+/// Keep the station associated with one of the stored networks: scan, join
+/// the strongest one in range, and start over whenever that ends.
 #[embassy_executor::task]
-async fn connection_task(
-    mut controller: WifiController<'static>,
-    credentials: &'static Credentials,
-) {
-    let config = WifiConfig::Station(
-        StationConfig::default()
-            .with_ssid(credentials.ssid.as_str())
-            .with_password(credentials.password.clone()),
-    );
-    if let Err(e) = controller.set_config(&config) {
-        error!("WiFi configuration rejected: {e:?}");
-        return;
-    }
-
-    let mut failing_since: Option<Instant> = None;
+async fn connection_task(mut controller: WifiController<'static>, settings: &'static Settings) {
+    let mut unjoinable_since: Option<Instant> = None;
+    let mut away_since: Option<Instant> = None;
     loop {
         state::update(|s| s.link = Link::Connecting);
-        info!("Connecting to WiFi network '{}'", credentials.ssid);
-        match controller.connect_async().await {
-            Ok(_) => {
-                failing_since = None;
-                debug!("WiFi associated");
-                state::update(|s| s.link = Link::NoAddress);
-                if let Err(e) = controller.wait_for_disconnect_async().await {
-                    warn!("WiFi disconnect wait failed: {e:?}");
-                }
-                warn!("WiFi disconnected");
-            }
+
+        let candidates = match in_range(&mut controller, &settings.networks).await {
+            Ok(candidates) => candidates,
             Err(e) => {
-                warn!("WiFi connect failed: {e:?}");
-                let since = *failing_since.get_or_insert_with(Instant::now);
-                if since.elapsed() >= CONNECT_FAILURE_RESET_AFTER {
-                    warn!("WiFi has not come back; resetting to re-initialise the driver");
-                    recovery::stash_reading();
-                    esp_hal::system::software_reset();
+                warn!("WiFi scan failed: {e:?}");
+                Vec::new()
+            }
+        };
+        if candidates.is_empty() {
+            let since = *away_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= AWAY_RESET_AFTER {
+                warn!("No known network for a long while; resetting the radio");
+                recovery::stash_reading();
+                esp_hal::system::software_reset();
+            }
+            state::update(|s| s.link = Link::NoKnownNetwork);
+            Timer::after(RESCAN_INTERVAL).await;
+            continue;
+        }
+        away_since = None;
+
+        let mut joined = false;
+        for network in candidates {
+            let config = WifiConfig::Station(
+                StationConfig::default()
+                    .with_ssid(network.ssid.as_str())
+                    .with_password(network.password.clone()),
+            );
+            if let Err(e) = controller.set_config(&config) {
+                warn!("WiFi configuration rejected: {e:?}");
+                continue;
+            }
+            info!("Connecting to WiFi network '{}'", network.ssid);
+            match controller.connect_async().await {
+                Ok(_) => {
+                    joined = true;
+                    unjoinable_since = None;
+                    debug!("WiFi associated");
+                    state::update(|s| s.link = Link::NoAddress);
+                    if let Err(e) = controller.wait_for_disconnect_async().await {
+                        warn!("WiFi disconnect wait failed: {e:?}");
+                    }
+                    warn!("WiFi disconnected");
+                    break;
                 }
+                Err(e) => warn!("WiFi connect failed: {e:?}"),
+            }
+        }
+
+        if !joined {
+            let since = *unjoinable_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= CONNECT_FAILURE_RESET_AFTER {
+                warn!("A known network is in range but cannot be joined; resetting the radio");
+                recovery::stash_reading();
+                esp_hal::system::software_reset();
             }
         }
         Timer::after(Duration::from_secs(5)).await;
     }
+}
+
+/// The stored networks that a scan can see right now, strongest first.
+async fn in_range(
+    controller: &mut WifiController<'static>,
+    known: &'static [Network],
+) -> Result<Vec<&'static Network>, esp_radio::wifi::WifiError> {
+    let mut found = controller.scan_async(&Default::default()).await?;
+    found.sort_unstable_by_key(|ap| core::cmp::Reverse(ap.signal_strength));
+    let mut candidates: Vec<&Network> = Vec::new();
+    for ap in &found {
+        if let Some(network) = known.iter().find(|n| n.ssid == ap.ssid.as_str())
+            && !candidates.iter().any(|c| c.ssid == network.ssid)
+        {
+            candidates.push(network);
+        }
+    }
+    debug!("Scan: {} networks, {} known", found.len(), candidates.len());
+    Ok(candidates)
 }
 
 /// Carrying the last reading across the recovery reset, so the display keeps
@@ -252,7 +302,7 @@ pub mod recovery {
 async fn poll_loop(
     stack: Stack<'static>,
     tls: TlsReference<'static>,
-    credentials: &'static Credentials,
+    token: &'static str,
 ) -> ! {
     loop {
         stack.wait_config_up().await;
@@ -268,7 +318,7 @@ async fn poll_loop(
         });
 
         let started = Instant::now();
-        let result = match with_timeout(REQUEST_TIMEOUT, probe(stack, tls, &credentials.token)).await {
+        let result = match with_timeout(REQUEST_TIMEOUT, probe(stack, tls, token)).await {
             Ok(result) => result,
             Err(_) => Err(Problem::Timeout),
         };

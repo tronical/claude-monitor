@@ -9,7 +9,7 @@ use esp_hal::peripherals::FLASH;
 use esp_storage::FlashStorage;
 use log::{info, warn};
 
-use crate::config::{Credentials, MAX_RECORD_LEN};
+use crate::config::{MAX_RECORD_LEN, Settings};
 
 /// `nvs` in espflash's default partition table: 0x9000, 24 KiB.
 const PARTITION_OFFSET: u32 = 0x9000;
@@ -20,10 +20,10 @@ const SECTOR_SIZE: u32 = 4096;
 const SETUP_REQUESTED: &[u8; 4] = b"CSET";
 
 pub enum Stored {
-    Credentials(Credentials),
+    Settings(Settings),
     /// Go to setup. With `previous`, the form starts from those settings and
-    /// the token is kept unless a new one is entered ("change WiFi").
-    SetupRequested { previous: Option<Credentials> },
+    /// the token is kept unless a new one is entered ("add a network").
+    SetupRequested { previous: Option<Settings> },
     Nothing,
 }
 
@@ -50,23 +50,23 @@ impl Store {
         if buffer.starts_with(SETUP_REQUESTED) {
             return Stored::SetupRequested { previous: None };
         }
-        match Credentials::from_record(&buffer) {
-            Some((credentials, false)) => Stored::Credentials(credentials),
-            Some((credentials, true)) => Stored::SetupRequested { previous: Some(credentials) },
+        match Settings::from_record(&buffer) {
+            Some((settings, false)) => Stored::Settings(settings),
+            Some((settings, true)) => Stored::SetupRequested { previous: Some(settings) },
             None => Stored::Nothing,
         }
     }
 
-    pub fn save(&mut self, credentials: &Credentials) -> Result<(), ()> {
-        self.replace(&credentials.to_record(false))?;
-        info!("Settings saved for network '{}'", credentials.ssid);
+    pub fn save(&mut self, settings: &Settings) -> Result<(), ()> {
+        self.replace(&settings.to_record(false))?;
+        info!("Settings saved with {} network(s)", settings.networks.len());
         Ok(())
     }
 
     /// Make the next boot go to setup: starting from `keep`, or from nothing.
-    pub fn request_setup(&mut self, keep: Option<&Credentials>) -> Result<(), ()> {
+    pub fn request_setup(&mut self, keep: Option<&Settings>) -> Result<(), ()> {
         match keep {
-            Some(credentials) => self.replace(&credentials.to_record(true)),
+            Some(settings) => self.replace(&settings.to_record(true)),
             None => self.replace(SETUP_REQUESTED),
         }
     }

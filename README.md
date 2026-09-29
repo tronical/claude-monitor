@@ -36,12 +36,16 @@ A freshly flashed box starts in setup mode and is configured from a phone:
 Your WiFi must be 2.4 GHz and WPA2; the bare-metal driver does not do
 WPA3-only networks.
 
-To move the box to another network, hold a finger on the screen for three
-seconds and pick **Change WiFi · keep token**: setup starts again with the old
-network name filled in and the token kept, unless you paste a new one to switch
-accounts. **Change WiFi and token** starts from nothing. Either is also the way
-out when the box cannot join its network any more; it never drops into setup
-mode by itself, so a rebooting router cannot strand it there.
+The box remembers up to eight networks and joins whichever is in range,
+strongest first, so places you visit regularly need setup once. To add one,
+hold a finger on the screen for three seconds and pick **Add a WiFi network**:
+setup starts again with the strongest network in range already filled in, the
+stored networks listed (each with a *forget* box), and the token kept unless
+you paste a new one to switch accounts. **Start over** forgets everything.
+Either is also the way out when the box cannot join any of its networks; it
+never drops into setup mode by itself, so a rebooting router cannot strand it
+there. With none of its networks in range it shows *NO KNOWN WIFI* and keeps
+rescanning.
 
 For development, `secrets.env` (see `secrets.env.example`) bakes settings into
 the firmware so that a wiped box comes up configured. Settings saved through
