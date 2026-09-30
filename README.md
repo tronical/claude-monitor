@@ -4,11 +4,22 @@ A desk display for Claude subscription usage on an ESP32-S3-BOX-3: five-hour
 and seven-day utilisation, reset countdowns, and whether the current pace runs
 into the limit before the window resets.
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="The display: session and week meters with reset countdowns" width="320">
+</p>
+
 It is standalone. There is no companion program on a computer: the box joins
 WiFi and asks the Anthropic API itself, once a minute. Tap the screen to poll
 immediately.
 
+The white tick on each bar marks where an even burn rate would be by now:
+usage past it means the window runs out before it resets.
+
 Bare-metal Rust (`no_std`, esp-hal), no ESP-IDF. UI in [Slint](https://slint.dev).
+
+This is an unofficial project, not affiliated with or endorsed by Anthropic. It
+reads usage from response headers that are not a documented interface, so it
+may stop working without notice.
 
 ## Setup
 
@@ -128,3 +139,11 @@ The esp stack is held on the esp-hal 1.1 line (esp-radio 0.18, esp-rtos 0.3)
 because that is what Slint's board support pins. Move everything together when
 Slint moves to esp-hal 1.2; at that point `mbedtls-rs`'s `esp32s3` feature can
 also be enabled for hardware-accelerated crypto.
+
+## Licence
+
+The source files in this repository are under the [MIT licence](LICENSE).
+
+The firmware links [Slint](https://slint.dev), used here under the GNU GPLv3,
+which is the option Slint offers for open-source embedded projects. A firmware
+binary built from this repository is therefore covered by the GPLv3.
