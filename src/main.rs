@@ -1,7 +1,8 @@
-//! Standalone Claude subscription usage display for the ESP32-S3-BOX-3.
+//! Standalone Claude subscription usage display for the ESP32-S3-BOX-3 and the
+//! LilyGO T4-S3.
 //!
 //! The two cores have one job each. The first runs Slint's event loop from the
-//! board support crate, which busy-polls touch and never yields. The second
+//! board support, which busy-polls touch and never yields. The second
 //! runs an embassy executor with WiFi, the IP stack and the HTTPS poll. They
 //! meet only in [`state`].
 
@@ -15,7 +16,17 @@ mod net;
 mod setup;
 mod state;
 mod storage;
+#[cfg(feature = "t4-s3")]
+mod t4_s3;
 mod usage;
+
+#[cfg(all(feature = "box-3", feature = "t4-s3"))]
+compile_error!("pick one board: build the T4-S3 with `--no-default-features --features t4-s3`");
+
+#[cfg(feature = "box-3")]
+use mcu_board_support as board;
+#[cfg(feature = "t4-s3")]
+use t4_s3 as board;
 
 use alloc::boxed::Box;
 use alloc::format;
@@ -48,10 +59,10 @@ const STALE_AFTER_SECS: u64 = 150;
 /// TLS handshakes with P-384 roots are deep; mbedtls runs on this stack.
 const NETWORK_CORE_STACK: usize = 96 * 1024;
 
-#[mcu_board_support::entry]
+#[board::entry]
 fn main() -> ! {
     // Sets up the display, touch, the Slint platform and the PSRAM heap.
-    mcu_board_support::init();
+    board::init();
 
     // The radio needs internal RAM, which the board support does not put on
     // the heap. Registered after PSRAM on purpose: esp-alloc serves ordinary
@@ -62,8 +73,8 @@ fn main() -> ! {
     esp_alloc::heap_allocator!(size: 96 * 1024);
 
     // SAFETY: the board support's `init` took the peripherals, used the ones
-    // for display and touch (SPI2, I2C0, PSRAM, a few GPIOs) and dropped the
-    // rest. Only peripherals it never touches are used from this second set.
+    // for display and touch (SPI2, I2C0, PSRAM, a few GPIOs, and DMA_CH0 on the
+    // T4-S3) and dropped the rest. Only peripherals it never touches are used from this second set.
     let peripherals = unsafe { esp_hal::peripherals::Peripherals::steal() };
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
@@ -142,7 +153,8 @@ fn main() -> ! {
             state::Reconfigure::Everything
         })
     });
-    let setup_screen = access_point.map(SetupScreen::new);
+    let scale_factor = window.window().scale_factor();
+    let setup_screen = access_point.map(|access_point| SetupScreen::new(access_point, scale_factor));
 
     // The network core cannot call into Slint, so the UI pulls instead. Twice
     // a second is plenty for minute-granular countdowns.
@@ -176,7 +188,7 @@ struct SetupScreen {
 }
 
 impl SetupScreen {
-    fn new(access_point: &'static AccessPoint) -> Self {
+    fn new(access_point: &'static AccessPoint, scale_factor: f32) -> Self {
         let join = format!(
             "WIFI:T:WPA;S:{};P:{};;",
             wifi_qr_escape(&access_point.ssid),
@@ -184,8 +196,8 @@ impl SetupScreen {
         );
         Self {
             access_point,
-            join_qr: qr_image(&join),
-            portal_qr: qr_image(setup::PORTAL_URL),
+            join_qr: qr_image(&join, scale_factor),
+            portal_qr: qr_image(setup::PORTAL_URL, scale_factor),
             shown: Cell::new(None),
         }
     }
@@ -239,13 +251,16 @@ impl SetupScreen {
 }
 
 /// Render `text` as a QR code sized for the 164 px card on the setup screen.
-fn qr_image(text: &str) -> Image {
+/// The image is shown pixel for pixel on the display, so it is sized in
+/// physical pixels: `scale_factor` of them to each logical one.
+fn qr_image(text: &str, scale_factor: f32) -> Image {
     // Version 10 holds a couple of hundred bytes; the payloads are under 60.
     const MAX_VERSION: Version = Version::new(10);
     const BUFFER_LEN: usize = MAX_VERSION.buffer_len();
     /// The card around the code supplies the rest of the quiet zone.
     const QUIET_MODULES: u32 = 1;
-    const TARGET_PX: u32 = 156;
+    const TARGET_LOGICAL_PX: f32 = 156.0;
+    let target_px = (TARGET_LOGICAL_PX * scale_factor) as u32;
 
     let mut scratch = [0u8; BUFFER_LEN];
     let mut modules = [0u8; BUFFER_LEN];
@@ -263,7 +278,7 @@ fn qr_image(text: &str) -> Image {
 
     let size = qr.size() as u32;
     // A whole number of pixels per module: a resampled QR code does not scan.
-    let scale = (TARGET_PX / (size + 2 * QUIET_MODULES)).max(1);
+    let scale = (target_px / (size + 2 * QUIET_MODULES)).max(1);
     let side = (size + 2 * QUIET_MODULES) * scale;
 
     let mut pixels = SharedPixelBuffer::<Rgb8Pixel>::new(side, side);

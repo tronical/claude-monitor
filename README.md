@@ -1,6 +1,7 @@
 # claude-monitor
 
-A desk display for Claude subscription usage on an ESP32-S3-BOX-3: five-hour
+A desk display for Claude subscription usage on an ESP32-S3-BOX-3 or a LilyGO
+T4-S3: five-hour
 and seven-day utilisation, reset countdowns, and whether the current pace runs
 into the limit before the window resets.
 
@@ -30,6 +31,17 @@ and `espflash`.
 . ~/export-esp.sh
 cargo run --release        # builds, flashes, and opens the serial monitor
 ```
+
+That builds for the ESP32-S3-BOX-3. For the LilyGO T4-S3, with its 2.41"
+600×450 AMOLED, pick the other board feature:
+
+```sh
+cargo run --release --no-default-features --features t4-s3
+```
+
+The T4-S3 shows the same 320×240 layout, drawn 1.875 times larger: the panel
+has the same 4:3 shape. Its support (`src/t4_s3.rs`) is written from LilyGO's
+reference driver and has not yet been tried on the hardware.
 
 A freshly flashed box starts in setup mode and is configured from a phone:
 
@@ -90,7 +102,7 @@ which then run on the monotonic timer between polls.
 
 | Core | Job |
 |---|---|
-| 0 | Slint event loop from `mcu-board-support` (display, touch). It busy-polls and never yields. |
+| 0 | Slint event loop from the board support (display, touch). It busy-polls and never yields. |
 | 1 | embassy executor: esp-radio WiFi, embassy-net, mbedtls TLS, the poll loop. |
 
 Slint is built single-threaded, so the cores share only a small `Copy` snapshot
@@ -117,6 +129,9 @@ the roots in `certs/`; see `certs/README.md` for the one thing it cannot check.
 ## Layout
 
 - `ui/main.slint` — the 320×240 UI. Preview with `slint-viewer ui/main.slint`.
+- `src/t4_s3.rs` — board support for the LilyGO T4-S3: the RM690B0 panel over
+  QSPI, CST226SE touch, and the Slint platform. The BOX-3 uses Slint's
+  `mcu-board-support` instead.
 - `src/usage.rs` — response header parsing; `core`-only and host-testable
   (the command is at the top of the file).
 - `src/net.rs` — WiFi, IP stack, HTTPS probe (core 1).
@@ -136,7 +151,8 @@ the roots in `certs/`; see `certs/README.md` for the one thing it cannot check.
 ## Version pins
 
 The esp stack is held on the esp-hal 1.1 line (esp-radio 0.18, esp-rtos 0.3)
-because that is what Slint's board support pins. Move everything together when
+because that is what Slint's board support pins. The T4-S3 module uses the
+same versions, so both boards build from one lock file. Move everything together when
 Slint moves to esp-hal 1.2; at that point `mbedtls-rs`'s `esp32s3` feature can
 also be enabled for hardware-accelerated crypto.
 

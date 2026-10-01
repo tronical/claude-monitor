@@ -16,8 +16,15 @@ fn main() {
         println!("cargo:rustc-env={name}={}", value.unwrap_or_default());
     }
 
-    let config = slint_build::CompilerConfiguration::new()
+    let mut config = slint_build::CompilerConfiguration::new()
         .embed_resources(slint_build::EmbedResourcesKind::EmbedForSoftwareRenderer);
+    // The UI is laid out at 320×240. The T4-S3 panel is 600×450, the same
+    // shape, so everything is drawn 1.875 times larger; fixing the factor at
+    // build time has glyphs rasterised at that size rather than scaled up.
+    // Keep in step with `t4_s3::SCALE_FACTOR`.
+    if std::env::var_os("CARGO_FEATURE_T4_S3").is_some() {
+        config = config.with_scale_factor(1.875);
+    }
     slint_build::compile_with_config("ui/main.slint", config).unwrap();
     slint_build::print_rustc_flags().unwrap();
 }

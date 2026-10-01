@@ -151,11 +151,11 @@ component SetupScreen inherits Rectangle {
                 background: white;
 
                 Image {
-                    // Shown at its natural size: the pixel buffer is already
-                    // an exact multiple of the module count, and resampling a
-                    // QR code is how it stops scanning.
-                    width: self.source.width * 1px;
-                    height: self.source.height * 1px;
+                    // Shown at its natural size in physical pixels: the pixel
+                    // buffer is already an exact multiple of the module count,
+                    // and resampling a QR code is how it stops scanning.
+                    width: self.source.width * 1phx;
+                    height: self.source.height * 1phx;
                     source: root.qr;
                     image-rendering: pixelated;
                 }

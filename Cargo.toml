@@ -3,12 +3,20 @@ name = "claude-monitor"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "Standalone Claude subscription usage display for the ESP32-S3-BOX-3"
+description = "Standalone Claude subscription usage display for the ESP32-S3-BOX-3 and LilyGO T4-S3"
 
 [[bin]]
 name = "claude-monitor"
 path = "src/main.rs"
 test = false
+
+[features]
+# One board at a time: `cargo run --release --no-default-features --features t4-s3`.
+default = ["box-3"]
+# ESP32-S3-BOX-3, through Slint's board support crate.
+box-3 = ["dep:mcu-board-support"]
+# LilyGO T4-S3 (2.41" AMOLED), through `src/t4_s3.rs`.
+t4-s3 = ["dep:esp-println", "dep:esp-bootloader-esp-idf"]
 
 [dependencies]
 # Slint and its board support come from the same upstream commit: the board
@@ -21,7 +29,7 @@ slint = { git = "https://github.com/slint-ui/slint", rev = "ca44fcb86dfbd1936d7e
   "renderer-software",
   "unsafe-single-threaded",
 ] }
-mcu-board-support = { git = "https://github.com/slint-ui/slint", rev = "ca44fcb86dfbd1936d7ec0b37e6ffd362983c0c4", features = ["esp32-s3-box-3"] }
+mcu-board-support = { git = "https://github.com/slint-ui/slint", rev = "ca44fcb86dfbd1936d7ec0b37e6ffd362983c0c4", features = ["esp32-s3-box-3"], optional = true }
 
 # The esp stack is held on the esp-hal 1.1 line, which is what the Slint board
 # support pins. esp-radio 0.18 / esp-rtos 0.3 are the matching releases.
@@ -31,6 +39,10 @@ esp-rtos = { version = "0.3.0", features = ["embassy", "esp-alloc", "esp-radio",
 # esp-rom-sys 0.1.5 moved to the esp-hal 1.2 PAC; left floating it drags a
 # second `esp32s3` crate into the build.
 esp-rom-sys = "=0.1.4"
+# What the board support crate brings along for the BOX-3; the T4-S3 module
+# needs the same, at the versions that crate pins.
+esp-println = { version = "0.17.0", default-features = false, features = ["auto", "esp32s3", "log-04"], optional = true }
+esp-bootloader-esp-idf = { version = "0.5.0", features = ["esp32s3"], optional = true }
 esp-radio = { version = "0.18.0", features = ["esp-alloc", "esp32s3", "log-04", "unstable", "wifi"] }
 
 embassy-executor = "0.10.0"
