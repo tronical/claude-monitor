@@ -97,16 +97,17 @@ pub fn init() {
     let mut panel = Panel { spi, cs, staging: Box::new([0; CHUNK]) };
     panel.init(&delay);
 
-    // Touch shares its I2C bus with the charger, which is left at its
-    // defaults.
+    // Touch shares its I2C bus with the charger.
     let mut touch_reset = Output::new(peripherals.GPIO17, Level::Low, OutputConfig::default());
     delay.delay_millis(100);
     touch_reset.set_high();
     delay.delay_millis(100);
-    let i2c = I2c::new(peripherals.I2C0, I2cConfig::default().with_frequency(Rate::from_khz(400)))
-        .unwrap()
-        .with_sda(peripherals.GPIO6)
-        .with_scl(peripherals.GPIO7);
+    let mut i2c =
+        I2c::new(peripherals.I2C0, I2cConfig::default().with_frequency(Rate::from_khz(400)))
+            .unwrap()
+            .with_sda(peripherals.GPIO6)
+            .with_scl(peripherals.GPIO7);
+    quiet_charger(&mut i2c);
     let touch = Touch { i2c };
 
     // Black rather than whatever the panel's memory held at power-up, until
@@ -318,6 +319,24 @@ impl Panel {
         {
             warn!("Panel pixel write failed: {e:?}");
         }
+    }
+}
+
+/// Turns off the SY6970 charger's red status LED, which otherwise blinks
+/// whenever no battery is attached. The charger's I2C watchdog goes too: once
+/// it has been written to, the watchdog would expire after 40 s and reset the
+/// registers, turning the LED back on.
+fn quiet_charger(i2c: &mut I2c<'static, Blocking>) {
+    const ADDRESS: u8 = 0x6A;
+    const REG07: u8 = 0x07;
+    const STAT_DIS: u8 = 1 << 6;
+    const WATCHDOG: u8 = 0b11 << 4;
+    let mut value = [0u8];
+    let result = i2c
+        .write_read(ADDRESS, &[REG07], &mut value)
+        .and_then(|()| i2c.write(ADDRESS, &[REG07, (value[0] & !WATCHDOG) | STAT_DIS]));
+    if let Err(e) = result {
+        warn!("Charger setup failed: {e:?}");
     }
 }
 
