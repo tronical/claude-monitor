@@ -1,15 +1,17 @@
-//! Standalone Claude subscription usage display for the ESP32-S3-BOX-3.
+//! Standalone Claude subscription usage display for the ESP32-S3-BOX-3 and the
+//! LilyGO T4-S3.
 //!
 //! The two cores have one job each. The first runs Slint's event loop from the
-//! board support crate, which busy-polls touch and never yields. The second
-//! runs an embassy executor with WiFi, the IP stack and the HTTPS poll. They
-//! meet only in [`state`].
+//! board support ([`board`]), which busy-polls touch and never yields. The
+//! second runs an embassy executor with WiFi, the IP stack and the HTTPS poll.
+//! They meet only in [`state`].
 
 #![no_std]
 #![no_main]
 
 extern crate alloc;
 
+mod board;
 mod config;
 mod net;
 mod setup;
@@ -48,10 +50,10 @@ const STALE_AFTER_SECS: u64 = 150;
 /// TLS handshakes with P-384 roots are deep; mbedtls runs on this stack.
 const NETWORK_CORE_STACK: usize = 96 * 1024;
 
-#[mcu_board_support::entry]
+#[board::entry]
 fn main() -> ! {
     // Sets up the display, touch, the Slint platform and the PSRAM heap.
-    mcu_board_support::init();
+    board::init();
 
     // The radio needs internal RAM, which the board support does not put on
     // the heap. Registered after PSRAM on purpose: esp-alloc serves ordinary
@@ -62,8 +64,8 @@ fn main() -> ! {
     esp_alloc::heap_allocator!(size: 96 * 1024);
 
     // SAFETY: the board support's `init` took the peripherals, used the ones
-    // for display and touch (SPI2, I2C0, PSRAM, a few GPIOs) and dropped the
-    // rest. Only peripherals it never touches are used from this second set.
+    // for display and touch (SPI2, I2C0, PSRAM, a few GPIOs, and on the T4-S3
+    // DMA channel 0) and dropped the rest. Only peripherals it never touches are used from this second set.
     let peripherals = unsafe { esp_hal::peripherals::Peripherals::steal() };
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);

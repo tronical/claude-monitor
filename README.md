@@ -1,6 +1,7 @@
 # claude-monitor
 
-A desk display for Claude subscription usage on an ESP32-S3-BOX-3: five-hour
+A desk display for Claude subscription usage on an ESP32-S3-BOX-3 or a LilyGO
+T4-S3: five-hour
 and seven-day utilisation, reset countdowns, and whether the current pace runs
 into the limit before the window resets.
 
@@ -26,10 +27,22 @@ may stop working without notice.
 You need the `esp` Rust toolchain ([espup](https://github.com/esp-rs/espup))
 and `espflash`.
 
+The board is picked with a cargo feature, and there is no default:
+
 ```sh
 . ~/export-esp.sh
-cargo run --release        # builds, flashes, and opens the serial monitor
+cargo run --release --features esp32-s3-box-3   # builds, flashes, opens the serial monitor
+cargo run --release --features lilygo-t4-s3
 ```
+
+| Feature | Board | Board support |
+|---|---|---|
+| `esp32-s3-box-3` | ESP32-S3-BOX-3, 320×240 LCD | Slint's `mcu-board-support` |
+| `lilygo-t4-s3` | LilyGO T4-S3, 2.41" 600×450 AMOLED | `src/board/lilygo_t4_s3.rs` |
+
+The T4-S3 shows the same 320×240 layout at a scale factor of 1.875, which
+fills its panel exactly. It has no motion sensor, so it cannot tell which way
+up it is held.
 
 A freshly flashed box starts in setup mode and is configured from a phone:
 
@@ -116,7 +129,7 @@ the roots in `certs/`; see `certs/README.md` for the one thing it cannot check.
 
 ## Layout
 
-- `ui/main.slint` — the 320×240 UI. Preview with `slint-viewer ui/main.slint`.
+- `ui/main.slint` — the 320×240 UI, scaled up on the T4-S3. Preview with `slint-viewer ui/main.slint`.
 - `src/usage.rs` — response header parsing; `core`-only and host-testable
   (the command is at the top of the file).
 - `src/net.rs` — WiFi, IP stack, HTTPS probe (core 1).
@@ -125,6 +138,10 @@ the roots in `certs/`; see `certs/README.md` for the one thing it cannot check.
   `usage.rs`.
 - `src/storage.rs` — the settings record in the `nvs` flash partition.
 - `src/main.rs` — startup, core split, and turning snapshots into UI text.
+- `src/board/` — picks the board support by feature. The T4-S3's lives here:
+  the RM690B0 panel on quad SPI, drawn from a full frame buffer in PSRAM
+  because the panel only accepts even-aligned windows, and the CST226SE touch
+  controller.
 - `tools/monitor.py` — resets the board and prints its log. The firmware only
   logs warnings and errors by default; build with `ESP_LOG=info` (or `debug`
   for a line per poll) to see more. `espflash monitor`

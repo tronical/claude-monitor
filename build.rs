@@ -6,7 +6,28 @@ use std::path::Path;
 /// starts in setup mode and is configured from a phone instead.
 const SETTINGS: [&str; 3] = ["WIFI_SSID", "WIFI_PASSWORD", "CLAUDE_OAUTH_TOKEN"];
 
+/// The `--features` that pick the board, and the scale factor each gives the
+/// 320x240 UI. The T4-S3's 600x450 panel is exactly 1.875 times that, so the
+/// same layout fills it; glyphs and images are pre-rendered at that scale.
+const BOARDS: [(&str, f32); 2] = [("esp32-s3-box-3", 1.0), ("lilygo-t4-s3", 1.875)];
+
 fn main() {
+    let chosen: Vec<_> = BOARDS
+        .iter()
+        .filter(|(name, _)| {
+            let var = format!("CARGO_FEATURE_{}", name.to_uppercase().replace('-', "_"));
+            std::env::var_os(var).is_some()
+        })
+        .collect();
+    let &[&(_, scale_factor)] = chosen.as_slice() else {
+        let names: Vec<_> = BOARDS.iter().map(|(name, _)| *name).collect();
+        panic!(
+            "pick exactly one board, e.g. `cargo run --release --features {}`; the boards are: {}",
+            names[0],
+            names.join(", ")
+        );
+    };
+
     let from_file = read_env_file(Path::new("secrets.env"));
     println!("cargo:rerun-if-changed=secrets.env");
 
@@ -17,7 +38,8 @@ fn main() {
     }
 
     let config = slint_build::CompilerConfiguration::new()
-        .embed_resources(slint_build::EmbedResourcesKind::EmbedForSoftwareRenderer);
+        .embed_resources(slint_build::EmbedResourcesKind::EmbedForSoftwareRenderer)
+        .with_scale_factor(scale_factor);
     slint_build::compile_with_config("ui/main.slint", config).unwrap();
     slint_build::print_rustc_flags().unwrap();
 }
