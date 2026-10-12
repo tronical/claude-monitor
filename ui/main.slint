@@ -116,7 +116,6 @@ component DialogButton inherits Rectangle {
         color: Palette.text;
         font-size: 13px;
         font-weight: 700;
-        letter-spacing: 1px;
     }
 
     touch := TouchArea {
@@ -195,7 +194,7 @@ component SetupScreen inherits Rectangle {
             }
 
             if root.cancellable: DialogButton {
-                text: "CANCEL";
+                text: "Cancel";
                 clicked => {
                     root.cancel();
                 }
@@ -430,7 +429,7 @@ export component MainWindow inherits Window {
                 spacing: 8px;
 
                 DialogButton {
-                    text: "NEW CLAUDE TOKEN";
+                    text: "New Claude token";
                     clicked => {
                         root.confirming = false;
                         root.open-token-page();
@@ -438,7 +437,7 @@ export component MainWindow inherits Window {
                 }
 
                 DialogButton {
-                    text: "ADD A WIFI NETWORK";
+                    text: "Add a WiFi network";
                     clicked => {
                         root.confirming = false;
                         root.reconfigure(true);
@@ -449,7 +448,7 @@ export component MainWindow inherits Window {
                     spacing: 8px;
 
                     DialogButton {
-                        text: "START OVER";
+                        text: "Start over";
                         primary: true;
                         clicked => {
                             root.confirming = false;
@@ -458,7 +457,7 @@ export component MainWindow inherits Window {
                     }
 
                     DialogButton {
-                        text: "CANCEL";
+                        text: "Cancel";
                         clicked => {
                             root.confirming = false;
                         }
