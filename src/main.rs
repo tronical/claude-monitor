@@ -17,6 +17,7 @@ mod net;
 mod setup;
 mod state;
 mod storage;
+mod token;
 mod usage;
 
 use alloc::boxed::Box;
@@ -37,7 +38,7 @@ use static_cell::StaticCell;
 use crate::config::{Network, Settings, wifi_qr_escape};
 use crate::net::Mode;
 use crate::setup::AccessPoint;
-use crate::state::{Link, Problem, SetupStage, Snapshot};
+use crate::state::{Link, Problem, SetupStage, Snapshot, TokenPage};
 use crate::storage::{Store, Stored};
 
 slint::include_modules!();
@@ -145,6 +146,25 @@ fn main() -> ! {
         })
     });
     let setup_screen = access_point.map(SetupScreen::new);
+    let token_screen = alloc::rc::Rc::new(TokenScreen::default());
+    window.on_open_token_page({
+        let (token_screen, weak_window) = (token_screen.clone(), window.as_weak());
+        move || {
+            token_screen.open();
+            if let Some(window) = weak_window.upgrade() {
+                token_screen.present(&window, &state::snapshot());
+            }
+        }
+    });
+    window.on_close_token_page({
+        let (token_screen, weak_window) = (token_screen.clone(), window.as_weak());
+        move || {
+            token_screen.close();
+            if let Some(window) = weak_window.upgrade() {
+                token_screen.present(&window, &state::snapshot());
+            }
+        }
+    });
 
     // The network core cannot call into Slint, so the UI pulls instead. Twice
     // a second is plenty for minute-granular countdowns.
@@ -158,7 +178,11 @@ fn main() -> ! {
             if let Some(window) = weak_window.upgrade() {
                 match &setup_screen {
                     Some(setup_screen) => setup_screen.present(&window, &state::snapshot()),
-                    None => present(&window, &state::snapshot()),
+                    None => {
+                        let snapshot = state::snapshot();
+                        present(&window, &snapshot);
+                        token_screen.present(&window, &snapshot);
+                    }
                 }
             }
         },
@@ -237,6 +261,86 @@ impl SetupScreen {
         window.set_setup_step(step.into());
         window.set_setup_headline(headline.into());
         window.set_setup_detail(detail.into());
+    }
+}
+
+/// Where the token page stands as far as the screen is concerned. The network
+/// core takes a moment to act on an open or a close, so the screen goes by
+/// what was asked for until its snapshot catches up.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum TokenPhase {
+    #[default]
+    Closed,
+    /// Asked for; the snapshot does not show it yet.
+    Opening,
+    Shown,
+    /// Cancelled; the snapshot may still show it for a moment.
+    Closing,
+}
+
+#[derive(Default)]
+struct TokenScreen {
+    phase: Cell<TokenPhase>,
+    /// The page shown last, and the QR code for its address.
+    shown: Cell<Option<TokenPage>>,
+}
+
+impl TokenScreen {
+    fn open(&self) {
+        self.phase.set(TokenPhase::Opening);
+        state::TOKEN_PAGE.signal(true);
+    }
+
+    fn close(&self) {
+        self.phase.set(TokenPhase::Closing);
+        state::TOKEN_PAGE.signal(false);
+    }
+
+    fn present(&self, window: &MainWindow, snapshot: &Snapshot) {
+        use TokenPhase::*;
+        let page = snapshot.token_page;
+        let phase = match (self.phase.get(), page) {
+            (Opening, Some(_)) => Shown,
+            // Timed out, or closed after the cancel took effect.
+            (Shown | Closing, None) => Closed,
+            (phase, _) => phase,
+        };
+        self.phase.set(phase);
+
+        let page = match phase {
+            Closed | Closing => None,
+            Opening => Some(page.unwrap_or(TokenPage::WaitingForAddress)),
+            Shown => page,
+        };
+        window.set_token_mode(page.is_some());
+        // Replacing the image repaints the whole code; only do it on a change.
+        if self.shown.replace(page) == page {
+            return;
+        }
+        let Some(page) = page else {
+            return;
+        };
+
+        let (headline, detail) = match page {
+            TokenPage::WaitingForAddress => {
+                ("Waiting for WiFi", String::from("The page opens once the display is online."))
+            }
+            TokenPage::Open { address, key } => {
+                let key = core::str::from_utf8(&key).unwrap_or_default();
+                window.set_token_qr(qr_image(&format!("http://{address}/{key}")));
+                (
+                    "Scan to paste a new token",
+                    format!(
+                        "Your phone has to be on the same WiFi.\n\nOr browse to\n{address}/\n{key}"
+                    ),
+                )
+            }
+            TokenPage::Saving => ("Saving", String::from("Restarting with the new token.")),
+        };
+        window.set_token_qr_visible(matches!(page, TokenPage::Open { .. }));
+        window.set_token_headline(headline.into());
+        window.set_token_detail(detail.into());
+        window.set_token_cancellable(page != TokenPage::Saving);
     }
 }
 
@@ -377,7 +481,7 @@ fn describe(problem: Problem) -> String {
         Problem::Connect => "API UNREACHABLE".into(),
         Problem::Tls => "TLS VERIFICATION FAILED".into(),
         Problem::Timeout => "REQUEST TIMED OUT".into(),
-        Problem::Unauthorized => "TOKEN REJECTED · RUN SETUP-TOKEN".into(),
+        Problem::Unauthorized => "TOKEN REJECTED · HOLD TO REPLACE".into(),
         Problem::NoLimits => "ACCOUNT REPORTS NO LIMITS".into(),
         Problem::Http(status) => format!("API ERROR {status}"),
         Problem::BadResponse => "UNREADABLE RESPONSE".into(),

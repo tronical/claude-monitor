@@ -133,8 +133,13 @@ component SetupScreen inherits Rectangle {
     in property <string> step;
     in property <string> headline;
     in property <string> detail;
+    in property <bool> cancellable;
+    callback cancel();
 
     background: Palette.background;
+
+    // Swallows touches so nothing underneath reacts.
+    TouchArea { }
 
     HorizontalLayout {
         padding: 12px;
@@ -188,6 +193,13 @@ component SetupScreen inherits Rectangle {
                 font-size: 12px;
                 wrap: word-wrap;
             }
+
+            if root.cancellable: DialogButton {
+                text: "CANCEL";
+                clicked => {
+                    root.cancel();
+                }
+            }
         }
     }
 }
@@ -212,7 +224,17 @@ export component MainWindow inherits Window {
     in property <string> setup-headline;
     in property <string> setup-detail;
 
+    // The page for pasting a new token from a phone on the same WiFi.
+    in property <bool> token-mode;
+    in property <image> token-qr;
+    in property <bool> token-qr-visible;
+    in property <string> token-headline;
+    in property <string> token-detail;
+    in property <bool> token-cancellable;
+
     callback refresh();
+    callback open-token-page();
+    callback close-token-page();
     /// Restart into setup; with `keep-token` only the WiFi network changes.
     callback reconfigure(keep-token: bool);
 
@@ -366,6 +388,18 @@ export component MainWindow inherits Window {
         detail: root.setup-detail;
     }
 
+    if root.token-mode: SetupScreen {
+        qr: root.token-qr;
+        qr-visible: root.token-qr-visible;
+        step: "CLAUDE TOKEN";
+        headline: root.token-headline;
+        detail: root.token-detail;
+        cancellable: root.token-cancellable;
+        cancel => {
+            root.close-token-page();
+        }
+    }
+
     if root.confirming: Rectangle {
         background: Palette.background.with-alpha(0.92);
 
@@ -378,14 +412,14 @@ export component MainWindow inherits Window {
             alignment: center;
 
             Text {
-                text: "Set up again?";
+                text: "Change settings";
                 color: Palette.text;
                 font-size: 18px;
                 font-weight: 700;
             }
 
             Text {
-                text: "The display restarts into setup; you finish on your phone.";
+                text: "You finish on your phone.";
                 color: Palette.muted;
                 font-size: 13px;
                 wrap: word-wrap;
@@ -396,6 +430,14 @@ export component MainWindow inherits Window {
                 spacing: 8px;
 
                 DialogButton {
+                    text: "NEW CLAUDE TOKEN";
+                    clicked => {
+                        root.confirming = false;
+                        root.open-token-page();
+                    }
+                }
+
+                DialogButton {
                     text: "ADD A WIFI NETWORK";
                     clicked => {
                         root.confirming = false;
@@ -403,19 +445,23 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                DialogButton {
-                    text: "START OVER";
-                    primary: true;
-                    clicked => {
-                        root.confirming = false;
-                        root.reconfigure(false);
-                    }
-                }
+                HorizontalLayout {
+                    spacing: 8px;
 
-                DialogButton {
-                    text: "CANCEL";
-                    clicked => {
-                        root.confirming = false;
+                    DialogButton {
+                        text: "START OVER";
+                        primary: true;
+                        clicked => {
+                            root.confirming = false;
+                            root.reconfigure(false);
+                        }
+                    }
+
+                    DialogButton {
+                        text: "CANCEL";
+                        clicked => {
+                            root.confirming = false;
+                        }
                     }
                 }
             }

@@ -5,6 +5,7 @@
 //! small `Copy` snapshot, and a Slint timer on the UI side polls it.
 
 use core::cell::Cell;
+use core::net::Ipv4Addr;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use embassy_sync::blocking_mutex::Mutex;
@@ -87,6 +88,8 @@ pub struct Snapshot {
     /// Why the most recent poll failed, if it did.
     pub problem: Option<Problem>,
     pub polling: bool,
+    /// The page for replacing the token, while it is open; see `token.rs`.
+    pub token_page: Option<TokenPage>,
 }
 
 static SNAPSHOT: Mutex<CriticalSectionRawMutex, Cell<Snapshot>> = Mutex::new(Cell::new(Snapshot {
@@ -94,10 +97,27 @@ static SNAPSHOT: Mutex<CriticalSectionRawMutex, Cell<Snapshot>> = Mutex::new(Cel
     reading: None,
     problem: None,
     polling: false,
+    token_page: None,
 }));
 
 /// Raised by the UI (a tap) to poll now instead of at the next interval.
 pub static REFRESH: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Characters in the secret part of the token page's address.
+pub const TOKEN_KEY_LEN: usize = 12;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TokenPage {
+    /// Asked for, but the display has no address on the WiFi yet.
+    WaitingForAddress,
+    /// Served at `http://{address}/{key}`.
+    Open { address: Ipv4Addr, key: [u8; TOKEN_KEY_LEN] },
+    /// A new token came in; it is being written and the device will restart.
+    Saving,
+}
+
+/// Raised by the UI to open (`true`) or close (`false`) the token page.
+pub static TOKEN_PAGE: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 
 /// What "set up again" should start from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

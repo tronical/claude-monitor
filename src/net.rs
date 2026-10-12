@@ -7,6 +7,7 @@ use core::ffi::CStr;
 use core::fmt::Write as _;
 
 use embassy_executor::Spawner;
+use embassy_futures::select::{Either, select};
 use embassy_net::dns::DnsQueryType;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{Runner, Stack, StackResources};
@@ -27,6 +28,7 @@ use crate::config::{Network, Settings};
 use crate::setup::{self, AccessPoint};
 use crate::state::{self, Held, Link, Problem, Reconfigure};
 use crate::storage::Store;
+use crate::token;
 use crate::usage::{self, Outcome};
 
 /// What the network core should do, decided at boot from what is in flash.
@@ -98,7 +100,8 @@ pub async fn run(
     };
 
     let seed = u64::from(trng.random()) << 32 | u64::from(trng.random());
-    static RESOURCES: StaticCell<StackResources<4>> = StaticCell::new();
+    // DHCP, DNS, the poll's socket and the token page's two.
+    static RESOURCES: StaticCell<StackResources<6>> = StaticCell::new();
     let (stack, runner) = embassy_net::new(
         interfaces.station,
         embassy_net::Config::dhcpv4(Default::default()),
@@ -117,23 +120,30 @@ pub async fn run(
 
     spawner.spawn(connection_task(controller, settings).unwrap());
     spawner.spawn(net_task(runner).unwrap());
+    spawner.spawn(token::task(stack, settings).unwrap());
 
     poll_loop(stack, tls.reference(), &settings.token).await
 }
 
-/// "Reconfigure" from the UI: leave a marker in flash and restart into setup.
+/// The one writer of flash in normal operation: "reconfigure" from the UI
+/// leaves a marker and restarts into setup, a token from the token page is
+/// saved and restarts with it.
 #[embassy_executor::task]
 async fn reconfigure_task(mut store: Store, settings: &'static Settings) {
-    let scope = state::RECONFIGURE.wait().await;
-    info!("Reconfiguration requested: {scope:?}");
+    let request = select(state::RECONFIGURE.wait(), token::SAVE.wait()).await;
+    if let Either::First(scope) = &request {
+        info!("Reconfiguration requested: {scope:?}");
+    }
+    // No `.await` from here on; see `state::halt_ui_core`.
     if !state::halt_ui_core() {
         warn!("UI core did not stop; writing anyway");
     }
-    let keep = match scope {
-        Reconfigure::WifiOnly => Some(settings),
-        Reconfigure::Everything => None,
+    let _ = match request {
+        Either::First(Reconfigure::WifiOnly) => store.request_setup(Some(settings)),
+        Either::First(Reconfigure::Everything) => store.request_setup(None),
+        // Not saved means the old token stays; the restart is harmless.
+        Either::Second(new) => store.save(&new),
     };
-    let _ = store.request_setup(keep);
     // The UI core is gone either way, so restarting is the only way forward.
     esp_hal::system::software_reset();
 }

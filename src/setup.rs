@@ -48,18 +48,22 @@ pub struct AccessPoint {
 
 impl AccessPoint {
     pub fn generate(trng: &mut Trng) -> Self {
-        // No 0/o, 1/l/i: the password may have to be typed from the screen.
-        const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
-        // Rejection sampling keeps the draw uniform over the alphabet.
-        let draw = || loop {
-            let candidate = (trng.random() & 0x1F) as usize;
-            if candidate < ALPHABET.len() {
-                break ALPHABET[candidate] as char;
-            }
-        };
-        let suffix: String = (0..4).map(|_| draw()).collect();
-        let password: String = (0..10).map(|_| draw()).collect();
+        let suffix: String = (0..4).map(|_| char::from(random_char(trng))).collect();
+        let password: String = (0..10).map(|_| char::from(random_char(trng))).collect();
         Self { ssid: format!("claude-monitor-{suffix}"), password }
+    }
+}
+
+/// One random character for something that may have to be typed from the
+/// screen, so without 0/o or 1/l/i.
+pub fn random_char(trng: &mut Trng) -> u8 {
+    const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
+    // Rejection sampling keeps the draw uniform over the alphabet.
+    loop {
+        let candidate = (trng.random() & 0x1F) as usize;
+        if candidate < ALPHABET.len() {
+            return ALPHABET[candidate];
+        }
     }
 }
 
@@ -259,11 +263,11 @@ struct Portal {
     controller: Mutex<NoopRawMutex, Option<WifiController<'static>>>,
 }
 
-struct Request<'a> {
-    method: &'a str,
-    path: &'a str,
-    host: &'a str,
-    body: &'a str,
+pub struct Request<'a> {
+    pub method: &'a str,
+    pub path: &'a str,
+    pub host: &'a str,
+    pub body: &'a str,
 }
 
 impl Portal {
@@ -447,7 +451,7 @@ fn saved_page(settings: &Settings) -> String {
     )
 }
 
-fn page(content: &str) -> String {
+pub fn page(content: &str) -> String {
     format!(
         r#"<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -479,7 +483,7 @@ fn form_field(body: &str, name: &str) -> String {
 
 /// Read a request head, plus the body its Content-Length announces. Returns
 /// the total length, or `None` if it does not fit or the peer went away.
-async fn read_request(socket: &mut TcpSocket<'_>, buffer: &mut [u8]) -> Option<usize> {
+pub async fn read_request(socket: &mut TcpSocket<'_>, buffer: &mut [u8]) -> Option<usize> {
     let mut filled = 0;
     let mut expected = None;
     loop {
@@ -507,7 +511,7 @@ async fn read_request(socket: &mut TcpSocket<'_>, buffer: &mut [u8]) -> Option<u
     }
 }
 
-fn parse_request(raw: &[u8]) -> Option<Request<'_>> {
+pub fn parse_request(raw: &[u8]) -> Option<Request<'_>> {
     let raw = core::str::from_utf8(raw).ok()?;
     let (head, body) = raw.split_once("\r\n\r\n")?;
     let mut request_line = head.lines().next()?.split(' ');
@@ -524,7 +528,7 @@ fn header<'a>(head: &'a str, name: &str) -> Option<&'a str> {
     })
 }
 
-async fn send(socket: &mut TcpSocket<'_>, status: &str, extra_headers: &str, body: &str) {
+pub async fn send(socket: &mut TcpSocket<'_>, status: &str, extra_headers: &str, body: &str) {
     // `no-store`: the captive-portal sheet must not cache the redirect or a
     // stale form, and nothing about this page should persist on the phone.
     let head = format!(

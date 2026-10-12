@@ -71,6 +71,12 @@ never drops into setup mode by itself, so a rebooting router cannot strand it
 there. With none of its networks in range it shows *NO KNOWN WIFI* and keeps
 rescanning.
 
+When the token expires or is revoked the box says *TOKEN REJECTED*. To give it
+a new one, hold the screen and pick **New Claude token**: the box stays on its
+WiFi and shows a QR code for a page at its own address, where you paste the
+output of `claude setup-token`. Your phone has to be on the same network. The
+page closes after ten minutes, or on *Cancel*.
+
 For development, `secrets.env` (see `secrets.env.example`) bakes settings into
 the firmware so that a wiped box comes up configured. Settings saved through
 the form take precedence over it.
@@ -82,6 +88,13 @@ password is random per boot and shown only on the device's own screen, so
 reading it takes being in the room. Afterwards the WiFi password and the token
 sit unencrypted in flash, where anyone holding the board can read them out.
 Treat the box like a logged-in laptop, and revoke the token if it goes missing.
+
+The token page is different: it is served over plain HTTP on your own network,
+so anyone who can read that traffic (on WPA2-Personal, anyone with its
+password) can read a token as it is submitted. Its address has a random part
+shown only on the screen, which keeps others on the network from replacing the
+token. Where that is not good enough, use **Add a WiFi network** and paste the
+token there instead.
 
 ### Why `claude setup-token`
 
@@ -134,6 +147,7 @@ the roots in `certs/`; see `certs/README.md` for the one thing it cannot check.
   (the command is at the top of the file).
 - `src/net.rs` — WiFi, IP stack, HTTPS probe (core 1).
 - `src/setup.rs` — setup mode: access point, DHCP, catch-all DNS, the form.
+- `src/token.rs` — the page for a new token, served on the home network.
 - `src/config.rs` — the settings record and form decoding; host-testable like
   `usage.rs`.
 - `src/storage.rs` — the settings record in the `nvs` flash partition.

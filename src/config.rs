@@ -177,6 +177,20 @@ impl Settings {
         Ok(settings)
     }
 
+    /// Decode the token page's submission: these settings with the `token`
+    /// field in place of the stored token. Unlike setup, empty is refused.
+    pub fn with_token_from_form(&self, body: &str) -> Result<Self, Invalid> {
+        let token = body
+            .split('&')
+            .filter_map(|pair| pair.split_once('='))
+            .find(|(name, _)| *name == "token")
+            .map(|(_, value)| String::from(url_decode(value).trim()))
+            .unwrap_or_default();
+        let settings = Self { networks: self.networks.clone(), token };
+        settings.validate()?;
+        Ok(settings)
+    }
+
     pub fn to_record(&self, setup_requested: bool) -> Vec<u8> {
         let mut record = Vec::with_capacity(MAX_RECORD_LEN);
         record.extend_from_slice(MAGIC);
@@ -426,6 +440,16 @@ mod tests {
             Settings::from_form("ssid=x&password=&token=sk-ant-new", Some(&sample())).map(|s| s.token),
             Ok("sk-ant-new".into())
         );
+    }
+
+    #[test]
+    fn the_token_form_replaces_only_the_token() {
+        let replaced = two().with_token_from_form("token=+sk-ant-new%0D%0A").unwrap();
+        assert_eq!(replaced.networks, two().networks);
+        assert_eq!(replaced.token, "sk-ant-new");
+        assert_eq!(two().with_token_from_form("token="), Err(Invalid::MissingToken));
+        assert_eq!(two().with_token_from_form(""), Err(Invalid::MissingToken));
+        assert_eq!(two().with_token_from_form("token=hunter2"), Err(Invalid::TokenShape));
     }
 
     #[test]
